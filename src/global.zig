@@ -1,6 +1,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+pub const dev_build = builtin.mode == .Debug;
+
+pub const width = 800;
+pub const height = 600;
+pub const tick_rate = 64;
+
 pub const scratch_buffer_size = 5 * 1024 * 1024;
 pub var scratch_buffer: []u8 = undefined;
 
