@@ -80,6 +80,21 @@ pub const Game = struct {
                 switch (ent.data) {
                     .projectile => {
                         const projectile = ent.data.projectile;
+
+                        for (state.ent_soa.items(.col_mask), 0..) |col_mask, i| {
+                            if (col_mask & ent.col_mask) {
+                                var ent_other = state.ent_soa.get(i);
+                                const col = c.CheckCollisionSpheres(ent_other.position, 1, ent.position, projectile.radius);
+                                if (col) {
+                                    ent.tag.exists = false;
+                                    // Event.applyEffects(i, projectile.effects);
+                                    if(@as(Entity.DataTag, ent_other.data) == Entity.DataTag.player) {
+                                        ent_other.data.
+                                    }
+                                }
+                            }
+                        }
+
                         const time_alive = state.time - projectile.spawn_time;
                         if (time_alive >= projectile.duration) {
                             ent.tag.exists = false;

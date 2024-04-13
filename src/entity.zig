@@ -4,6 +4,7 @@ const global = @import("global.zig");
 const ability = @import("ability.zig");
 
 const Ability = ability.Ability;
+const Effect = ability.Effect;
 
 pub const Entity = struct {
     pub const count = 100;
@@ -16,7 +17,7 @@ pub const Entity = struct {
         _padding: u14 = 0,
     };
 
-    pub const Kind = enum {
+    pub const DataTag = enum {
         empty,
         player,
         projectile,
@@ -25,6 +26,7 @@ pub const Entity = struct {
     pub const Projectile = struct {
         spawn_time: f32,
         duration: f32,
+        radius: f32,
     };
 
     pub const Player = struct {
@@ -35,49 +37,19 @@ pub const Entity = struct {
         ultra: Ability,
     };
 
-    pub const Data = union(Kind) {
+    pub const Data = union(DataTag) {
         empty: void,
         player: Player,
         projectile: Projectile,
     };
 
-    pub const SoA = struct {
-        tag: [count]Tag = [_]Tag{.{}} ** count,
-        position: [count]c.Vector2 = [_]c.Vector2{.{}} ** count,
-        velocity: [count]c.Vector2 = [_]c.Vector2{.{}} ** count,
-        data: [count]Data = [_]Data{.{ .empty = {} }} ** count,
-
-        pub fn set(soa: *SoA, ndx: usize, entity: Entity) void {
-            soa.tag[ndx] = entity.tag;
-            soa.position[ndx] = entity.position;
-            soa.velocity[ndx] = entity.velocity;
-            soa.data[ndx] = entity.data;
-        }
-
-        pub fn get(soa: *const SoA, ndx: usize) Entity {
-            return Entity{
-                .tag = soa.tag[ndx],
-                .position = soa.position[ndx],
-                .velocity = soa.velocity[ndx],
-                .data = soa.data[ndx],
-            };
-        }
-
-        pub fn push(soa: *SoA, entity: Entity) void {
-            for (soa.tag, 0..) |tag, i| {
-                if (tag.exists == false) {
-                    soa.set(i, entity);
-                    return;
-                }
-            }
-            std.debug.print("entity list full cannot push\n", .{});
-            unreachable;
-        }
-    };
+    pub const SoA = std.MultiArrayList(Entity);
 
     tag: Tag = .{ .exists = true },
     position: c.Vector2 = .{},
     velocity: c.Vector2 = .{},
+    effects: []Effect,
+    col_mask: u32 = 0,
     data: Entity.Data = .{ .empty = {} },
 };
 

@@ -11,14 +11,12 @@ const Game = game.Game;
 const Entity = entity.Entity;
 
 var info_table: std.AutoHashMap(Ability.Id, Ability.Info) = undefined;
-var invoke_fn_table: std.AutoHashMap(Ability.Id, Ability.InvokeFn) = undefined;
 
 const a = [_]struct { a: Ability }{ 1, .{ .a = 1 } };
 
 pub fn init() void {
     if (global.dev_build) {
         info_table = std.AutoHashMap(Ability.Id, Ability.Info).init(global.allocator());
-        invoke_fn_table = std.AutoHashMap(Ability.Id, Ability.InvokeFn).init(global.allocator());
     }
 
     // TODO dynamic loading of abilities
@@ -32,7 +30,7 @@ pub fn init() void {
     // defer lib.close();
 
     for (abilities, 0..) |ability, id| {
-        register(@intCast(id), ability.info, ability.invoke_fn) catch unreachable;
+        register(@intCast(id), ability) catch unreachable;
     }
 }
 
@@ -42,17 +40,14 @@ pub fn deinit() void {
     }
 
     info_table.deinit();
-    invoke_fn_table.deinit();
 }
 
-pub fn register(id: Ability.Id, info: Ability.Info, invoke_fn: Ability.InvokeFn) !void {
+pub fn register(id: Ability.Id, info: Ability.Info) !void {
     try info_table.put(id, info);
-    try invoke_fn_table.put(id, invoke_fn);
 }
 
 pub fn unregister(id: Ability.Id) void {
     info_table.remove(id);
-    invoke_fn_table.remove(id);
 }
 
 pub fn getId(name: []const u8) Ability.Id {
@@ -71,6 +66,7 @@ pub const Ability = struct {
         name: []const u8,
         desc: []const u8,
         timings: Ability.Timings,
+        invoke_fn: Ability.InvokeFn,
     };
 
     pub const Timings = struct {
@@ -84,8 +80,8 @@ pub const Ability = struct {
     id: Ability.Id,
     info: Ability.Info,
     timer: Ability.Timings,
-    // state: *anyopaque = {},
     invoke_fn: InvokeFn = undefined,
+    // state: *opaque = {},
 
     pub fn create(id: Ability.Id) Ability {
         const info = info_table.get(id).?;
@@ -93,7 +89,7 @@ pub const Ability = struct {
             .id = id,
             .info = info,
             .timer = Ability.Timings{},
-            .invoke_fn = if (global.dev_build) undefined else invoke_fn_table.get(id).?,
+            .invoke_fn = if (global.dev_build) undefined else info.get(id).?.invoke_fn,
         };
     }
 
@@ -103,7 +99,7 @@ pub const Ability = struct {
 
     pub fn invoke(self: *Ability, caster: Entity.Id, state: *Game.State) void {
         if (global.dev_build) {
-            const invoke_fn = invoke_fn_table.get(self.id).?;
+            const invoke_fn = info_table.get(self.id).?.invoke_fn;
             invoke_fn(self, caster, state);
         } else {
             self.invoke_fn(caster, state);
@@ -111,11 +107,22 @@ pub const Ability = struct {
     }
 };
 
-const abilities = [_]struct {
-    info: Ability.Info,
-    invoke_fn: Ability.InvokeFn,
-}{ .{
-    .info = .{
+pub const Effect = union(Effect.Kind) {
+    pub const Kind = enum {
+        dot,
+        buff,
+    };
+
+    dot: DoT,
+
+    pub const DoT = struct {
+        count: u32,
+        freq: f32,
+    };
+};
+
+const abilities = [_]Ability.Info{
+    .{
         .name = "fireball",
         .desc = "a flaming projectile",
         .timings = .{
@@ -123,10 +130,9 @@ const abilities = [_]struct {
             .channel = 0.5,
             .cooldown = 2,
         },
+        .invoke_fn = invoke_fireball,
     },
-    .invoke_fn = invoke_fireball,
-}, .{
-    .info = .{
+    .{
         .name = "dash",
         .desc = "move in a direction quickly",
         .timings = .{
@@ -134,13 +140,18 @@ const abilities = [_]struct {
             .channel = 0,
             .cooldown = 5,
         },
+        .invoke_fn = invoke_dash,
     },
-    .invoke_fn = invoke_dash,
-} };
+};
 
 fn invoke_fireball(ability: *Ability, caster_id: Entity.Id, state: *Game.State) void {
     const duration = 1;
     const speed = 10;
+
+    const dot = .DoT{
+        .freq = 3,
+        .count = 3,
+    };
 
     ability.timer.cooldown = ability.info.timings.cooldown;
 
@@ -149,6 +160,7 @@ fn invoke_fireball(ability: *Ability, caster_id: Entity.Id, state: *Game.State) 
     const col = c.GetRayCollisionMesh(ray, state.world.ground.meshes[0], c.MatrixIdentity());
     const dir = c.Vector2Subtract(c.Vector2{ .x = col.point.x, .y = col.point.z }, caster.position);
     const dir_n = c.Vector2Normalize(dir);
+
     const e = Entity{
         .position = c.Vector2Add(caster.position, dir_n),
         .velocity = c.Vector2Scale(dir_n, speed),
@@ -158,6 +170,9 @@ fn invoke_fireball(ability: *Ability, caster_id: Entity.Id, state: *Game.State) 
         .data = .{ .projectile = .{
             .spawn_time = state.time,
             .duration = duration,
+            .effects = .{
+                .{ .dot = dot },
+            },
         } },
     };
     // std.debug.print("spawn fireball {}\n", .{ability});
@@ -170,5 +185,4 @@ fn invoke_dash(ability: *Ability, caster_id: Entity.Id, state: *Game.State) void
     _ = state;
 
     // apply dash effect on caster
-
 }
