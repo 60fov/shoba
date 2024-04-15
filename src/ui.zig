@@ -3,9 +3,6 @@ const std = @import("std");
 const c = @import("c.zig");
 const global = @import("global.zig");
 const input = @import("input.zig");
-const game = @import("game.zig");
-
-const Game = game.Game;
 
 const width = global.width;
 const height = global.height;
@@ -90,84 +87,84 @@ pub fn draw() void {
 }
 
 var show_dev: bool = true;
-pub fn drawDev(shoba: *Game) void {
-    if (c.IsKeyPressed(c.KEY_ESCAPE)) show_dev = !show_dev;
+// pub fn drawDev(shoba: *Game) void {
+//     if (c.IsKeyPressed(c.KEY_ESCAPE)) show_dev = !show_dev;
 
-    if (show_dev) {
-        var index: f32 = 0;
-        const padding = 4;
-        const row_height = 23;
-        const y_offset = row_height + padding;
-        const wbox = c.Rectangle{
-            .x = 10,
-            .y = 10,
-            .width = 200,
-            .height = 400,
-        };
-        const inner = c.Rectangle{
-            .x = wbox.x + padding,
-            .y = wbox.y + padding + row_height,
-            .width = wbox.width - padding * 2,
-            .height = 20,
-        };
-        show_dev = c.GuiWindowBox(wbox, "dev") != 1;
+//     if (show_dev) {
+//         var index: f32 = 0;
+//         const padding = 4;
+//         const row_height = 23;
+//         const y_offset = row_height + padding;
+//         const wbox = c.Rectangle{
+//             .x = 10,
+//             .y = 10,
+//             .width = 200,
+//             .height = 400,
+//         };
+//         const inner = c.Rectangle{
+//             .x = wbox.x + padding,
+//             .y = wbox.y + padding + row_height,
+//             .width = wbox.width - padding * 2,
+//             .height = 20,
+//         };
+//         show_dev = c.GuiWindowBox(wbox, "dev") != 1;
 
-        const str = std.fmt.bufPrintZ(global.scratch_buffer, "m: {d}\t{d}", .{ input.mouse.pos.x, input.mouse.pos.y }) catch "";
-        if (c.GuiLabel(c.Rectangle{
-            .x = inner.x,
-            .y = inner.y + index * y_offset,
-            .width = inner.width,
-            .height = row_height,
-        }, @ptrCast(str.ptr)) == 1) {}
-        index += 1;
+//         const str = std.fmt.bufPrintZ(global.scratch_buffer, "m: {d}\t{d}", .{ input.mouse.pos.x, input.mouse.pos.y }) catch "";
+//         if (c.GuiLabel(c.Rectangle{
+//             .x = inner.x,
+//             .y = inner.y + index * y_offset,
+//             .width = inner.width,
+//             .height = row_height,
+//         }, @ptrCast(str.ptr)) == 1) {}
+//         index += 1;
 
-        const label_width = 30;
-        const cam = &shoba.state.next.cam;
+//         const label_width = 30;
+//         const cam = &shoba.state.next.cam;
 
-        _ = c.GuiSlider(c.Rectangle{
-            .x = inner.x + label_width,
-            .y = inner.y + index * y_offset,
-            .width = inner.width - label_width,
-            .height = row_height,
-        }, "fovy", "", @ptrCast(&cam.fovy), 40, 120);
-        index += 1;
+//         _ = c.GuiSlider(c.Rectangle{
+//             .x = inner.x + label_width,
+//             .y = inner.y + index * y_offset,
+//             .width = inner.width - label_width,
+//             .height = row_height,
+//         }, "fovy", "", @ptrCast(&cam.fovy), 40, 120);
+//         index += 1;
 
-        var cam_angle: f32 = std.math.atan2(cam.position.z, cam.position.y);
-        var cam_dist: f32 = c.Vector2Length(c.Vector2{ .x = cam.position.z, .y = cam.position.y });
-        // const cam_h = cam_dist * std.math.sin(cam_angle);
-        // var cam_yoff: f32 = cam.position.y - cam_h;
+//         var cam_angle: f32 = std.math.atan2(cam.position.z, cam.position.y);
+//         var cam_dist: f32 = c.Vector2Length(c.Vector2{ .x = cam.position.z, .y = cam.position.y });
+//         // const cam_h = cam_dist * std.math.sin(cam_angle);
+//         // var cam_yoff: f32 = cam.position.y - cam_h;
 
-        if (c.GuiSlider(c.Rectangle{
-            .x = inner.x + label_width,
-            .y = inner.y + index * y_offset,
-            .width = inner.width - label_width,
-            .height = row_height,
-        }, "angle", "", @ptrCast(&cam_angle), 0, std.math.pi / 2.0 - 0.01) == 1) {
-            cam.position.z = cam_dist * std.math.cos(cam_angle);
-            cam.position.y = cam_dist * std.math.sin(cam_angle);
-        }
-        index += 1;
+//         if (c.GuiSlider(c.Rectangle{
+//             .x = inner.x + label_width,
+//             .y = inner.y + index * y_offset,
+//             .width = inner.width - label_width,
+//             .height = row_height,
+//         }, "angle", "", @ptrCast(&cam_angle), 0, std.math.pi / 2.0 - 0.01) == 1) {
+//             cam.position.z = cam_dist * std.math.cos(cam_angle);
+//             cam.position.y = cam_dist * std.math.sin(cam_angle);
+//         }
+//         index += 1;
 
-        if (c.GuiSlider(c.Rectangle{
-            .x = inner.x + label_width,
-            .y = inner.y + index * y_offset,
-            .width = inner.width - label_width,
-            .height = row_height,
-        }, "dist", "", @ptrCast(&cam_dist), 1, 100) == 1) {
-            cam.position.z = cam_dist * std.math.cos(cam_angle);
-            cam.position.y = cam_dist * std.math.sin(cam_angle);
-        }
-        index += 1;
+//         if (c.GuiSlider(c.Rectangle{
+//             .x = inner.x + label_width,
+//             .y = inner.y + index * y_offset,
+//             .width = inner.width - label_width,
+//             .height = row_height,
+//         }, "dist", "", @ptrCast(&cam_dist), 1, 100) == 1) {
+//             cam.position.z = cam_dist * std.math.cos(cam_angle);
+//             cam.position.y = cam_dist * std.math.sin(cam_angle);
+//         }
+//         index += 1;
 
-        // if (c.GuiSlider(c.Rectangle{
-        //     .x = inner.x + label_width,
-        //     .y = inner.y + index * y_offset,
-        //     .width = inner.width - label_width,
-        //     .height = row_height,
-        // }, "y-off", "", @ptrCast(&cam_yoff), 1, 10) == 1) {
-        //     cam.position.y = cam_dist * std.math.sin(cam_angle) - cam_yoff;
-        //     cam.target.y = cam_yoff;
-        // }
-        // index += 1;
-    }
-}
+//         // if (c.GuiSlider(c.Rectangle{
+//         //     .x = inner.x + label_width,
+//         //     .y = inner.y + index * y_offset,
+//         //     .width = inner.width - label_width,
+//         //     .height = row_height,
+//         // }, "y-off", "", @ptrCast(&cam_yoff), 1, 10) == 1) {
+//         //     cam.position.y = cam_dist * std.math.sin(cam_angle) - cam_yoff;
+//         //     cam.target.y = cam_yoff;
+//         // }
+//         // index += 1;
+//     }
+// }

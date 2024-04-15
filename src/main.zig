@@ -5,41 +5,55 @@ const global = @import("global.zig");
 const input = @import("input.zig");
 const ui = @import("ui.zig");
 const game = @import("game.zig");
-const entity = @import("entity.zig");
-const ability = @import("ability.zig");
 const asset = @import("asset.zig");
+const graphics = @import("graphics.zig");
 
 const Asset = asset.Asset;
-const Game = game.Game;
-const Entity = entity.Entity;
-const Ability = ability.Ability;
-
-const width = global.width;
-const height = global.height;
-const tick_rate = global.tick_rate;
 
 pub fn main() void {
     const allocator = std.heap.c_allocator;
     global.init(allocator) catch unreachable;
     defer global.deinit(allocator);
 
-    c.InitWindow(width, height, "shoba");
+    c.InitWindow(global.window_width, global.window_height, "shoba");
     defer c.CloseWindow();
 
     c.SetExitKey(c.KEY_NULL);
 
-    // c.SetTargetFPS(165);
+    c.SetTargetFPS(120);
 
+    graphics.init();
     asset.init();
     defer asset.deinit();
-    asset.load(.framebuffer, "game", .{ .framebuffer = .{ .width = width, .height = height } }) catch unreachable;
-    asset.load(.model, "dev_ground", .{ .model = c.LoadModelFromMesh(c.GenMeshPlane(100, 100, 10, 10)) }) catch unreachable;
 
     rng.init();
     ui.init();
-    ability.init();
 
-    const ns = std.time.ns_per_s / tick_rate;
+    // load assets
+    {
+        std.debug.print("loading assets... ", .{});
+        const start = std.time.nanoTimestamp();
+
+        asset.load(.model, "default", .{ .model = asset.Model{ .rl_model = c.LoadModelFromMesh(c.GenMeshPoly(6, 0.1)) } }) catch unreachable;
+        asset.load(.model, "dev_ground", .{ .model = asset.Model.init("assets/dev_ground.glb") }) catch unreachable;
+        asset.load(.model, "daniel", .{ .model = asset.Model.init("assets/daniel.glb") }) catch unreachable;
+        asset.load(.model_animation, "daniel_animation", .{ .model_animation = asset.ModelAnimation.init("assets/daniel.glb") }) catch unreachable;
+
+        const end = std.time.nanoTimestamp();
+        std.debug.print("done! {d:.2}s\n", .{@as(f32, @floatFromInt((end - start))) / std.time.ns_per_s});
+    }
+
+    std.debug.print("initializing game state... \n", .{});
+
+    const game_state = global.mem.fba_allocator.alloc(game.State, 2) catch unreachable;
+    const state_prev = &game_state[0];
+    const state_next = &game_state[1];
+    defer global.mem.fba_allocator.free(game_state);
+
+    state_prev.* = game.State.init();
+    state_next.* = game.State.init();
+
+    const ns = std.time.ns_per_s / global.tick_rate;
     if (ns == 0) unreachable;
     const max_accum = ns * 10;
 
@@ -48,41 +62,6 @@ pub fn main() void {
     var delta: i128 = 0;
     var alpha: f32 = 0;
 
-    const shoba = global.allocator().create(Game) catch unreachable;
-    defer global.allocator().destroy(shoba);
-    shoba.* = Game{};
-
-    // temp init game
-    {
-        const state = &shoba.state.next;
-        state.world = Game.World.load();
-        state.ent_soa.set(0, Entity{
-            .tag = .{
-                .exists = true,
-                .controlled = true,
-            },
-            .position = .{},
-            .data = .{ .player = .{
-                .mobility = Ability.createFromName("fireball"),
-                .basic = Ability.createFromName("fireball"),
-                .offensive = Ability.createFromName("fireball"),
-                .defensive = Ability.createFromName("fireball"),
-                .ultra = Ability.createFromName("fireball"),
-            } },
-        });
-
-        for (1..11) |ndx| {
-            const e = Entity{
-                .tag = .{ .exists = true },
-                .position = rng.position(),
-                .velocity = .{},
-            };
-            state.ent_soa.set(ndx, e);
-        }
-    }
-
-    const fb = asset.get("game").framebuffer;
-
     while (!c.WindowShouldClose()) {
         // game time step
         {
@@ -90,7 +69,7 @@ pub fn main() void {
             delta = now - last;
             last = now;
 
-            FPS.pushDelta(delta);
+            // FPS.pushDelta(delta);
 
             accumulator += delta;
             if (accumulator > max_accum) {
@@ -104,20 +83,20 @@ pub fn main() void {
 
             while (accumulator >= ns) {
                 input.poll();
-                shoba.update(ns);
+                state_prev.* = state_next.*;
+                game.update(state_next, ns);
                 accumulator -= ns;
             }
         }
 
         // TODO frame limiter
         {
-            c.BeginTextureMode(fb);
+            c.BeginTextureMode(graphics.framebuffer_main);
             {
                 c.ClearBackground(c.BLUE);
                 alpha = @as(f32, @floatFromInt(accumulator)) / ns;
-                shoba.draw(alpha);
+                game.draw(state_prev, state_next, alpha);
                 // ui.draw();
-
             }
             c.EndTextureMode();
 
@@ -126,18 +105,19 @@ pub fn main() void {
             {
                 c.ClearBackground(c.BLACK);
 
-                const src = c.Rectangle{ .width = width, .height = -height };
-                const dst = c.Rectangle{ .width = width, .height = height };
-                c.DrawTexturePro(fb.texture, src, dst, .{}, 0, c.WHITE);
+                const src = c.Rectangle{
+                    .width = @floatFromInt(graphics.framebuffer_main.texture.width),
+                    .height = @floatFromInt(-graphics.framebuffer_main.texture.height),
+                };
+                const dst = c.Rectangle{ .width = global.window_width, .height = global.window_height };
+                c.DrawTexturePro(graphics.framebuffer_main.texture, src, dst, .{}, 0, c.WHITE);
 
-                // c.DrawFPS(10, 10);
-                ui.drawDev(shoba);
-                FPS.draw(10, 10);
+                c.DrawFPS(10, 10);
             }
             c.EndDrawing();
         }
 
-        c.SwapScreenBuffer();
+        // c.SwapScreenBuffer();
     }
 }
 
@@ -164,7 +144,7 @@ const FPS = struct {
             last_avg_fps = avgFps();
         }
 
-        const text = std.fmt.bufPrintZ(global.scratch_buffer, "{d:.0} FPS", .{last_avg_fps}) catch "???";
+        const text = std.fmt.bufPrintZ(global.mem.scratch_buffer, "{d:.0} FPS", .{last_avg_fps}) catch "???";
         c.DrawText(text, 10, 10, 20, c.GREEN);
     }
 
