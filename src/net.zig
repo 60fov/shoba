@@ -1,5 +1,4 @@
 const std = @import("std");
-const os = std.os;
 const input = @import("input.zig");
 
 pub const proto_id: u32 = 0xbeef;
@@ -129,7 +128,7 @@ pub const PacketBuffer = struct {
 };
 
 pub const Socket = struct {
-    fd: os.socket_t,
+    fd: std.posix.socket_t,
     address: std.net.Address,
 
     pub const SocketError = error{
@@ -139,8 +138,8 @@ pub const Socket = struct {
     };
 
     pub const Family = enum(u32) {
-        INET = os.AF.INET,
-        INET6 = os.AF.INET6,
+        INET = std.posix.AF.INET,
+        INET6 = std.posix.AF.INET6,
     };
 
     pub const SocketOptions = struct {
@@ -157,27 +156,27 @@ pub const Socket = struct {
     /// only creates the socket's file descriptor,
     /// call `bind` to set the socket's address
     pub fn socket(options: SocketOptions) !Socket {
-        const sockfd = try os.socket(
+        const sockfd = try std.posix.socket(
             @intFromEnum(options.family),
-            os.SOCK.DGRAM | os.SOCK.NONBLOCK,
+            std.posix.SOCK.DGRAM | std.posix.SOCK.NONBLOCK,
             0,
         );
-        errdefer os.close(sockfd);
+        errdefer std.posix.close(sockfd);
 
         if (options.reuse_address) {
-            try os.setsockopt(
+            try std.posix.setsockopt(
                 sockfd,
-                os.SOL.SOCKET,
-                os.SO.REUSEADDR,
+                std.posix.SOL.SOCKET,
+                std.posix.SO.REUSEADDR,
                 &std.mem.toBytes(@as(c_int, 1)),
             );
         }
 
-        if (@hasDecl(os.SO, "REUSEPORT") and options.reuse_port) {
-            try os.setsockopt(
+        if (@hasDecl(std.posix.SO, "REUSEPORT") and options.reuse_port) {
+            try std.posix.setsockopt(
                 sockfd,
-                os.SOL.SOCKET,
-                os.SO.REUSEPORT,
+                std.posix.SOL.SOCKET,
+                std.posix.SO.REUSEPORT,
                 &std.mem.toBytes(@as(c_int, 1)),
             );
         }
@@ -189,12 +188,12 @@ pub const Socket = struct {
     }
 
     /// must be called after `socket`
-    pub fn bind(self: *Socket, address: std.net.Address) (os.BindError || os.GetSockNameError)!void {
+    pub fn bind(self: *Socket, address: std.net.Address) (std.posix.BindError || std.posix.GetSockNameError)!void {
         var sock_len = address.getOsSockLen();
-        try os.bind(self.fd, &address.any, sock_len);
+        try std.posix.bind(self.fd, &address.any, sock_len);
 
-        var sock_name: os.sockaddr = undefined;
-        try os.getsockname(self.fd, &sock_name, &sock_len);
+        var sock_name: std.posix.sockaddr = undefined;
+        try std.posix.getsockname(self.fd, &sock_name, &sock_len);
         self.address = std.net.Address{ .any = sock_name };
     }
 
@@ -205,34 +204,34 @@ pub const Socket = struct {
         // get first ipv4 or crash if none found
         const address = ip: {
             for (list.addrs) |addr| {
-                if (addr.any.family == os.AF.INET) break :ip addr;
+                if (addr.any.family == std.posix.AF.INET) break :ip addr;
             }
             std.debug.print("no ipv4 address available\n", .{});
             unreachable;
         };
 
         var sock_len = address.getOsSockLen();
-        try os.bind(self.fd, &address.any, sock_len);
+        try std.posix.bind(self.fd, &address.any, sock_len);
 
-        var sock_name: os.sockaddr = undefined;
-        try os.getsockname(self.fd, &sock_name, &sock_len);
+        var sock_name: std.posix.sockaddr = undefined;
+        try std.posix.getsockname(self.fd, &sock_name, &sock_len);
         self.address = std.net.Address{ .any = sock_name };
     }
 
     pub fn close(self: *Socket) void {
-        os.close(self.fd);
+        std.posix.close(self.fd);
         self.* = undefined;
     }
 
-    pub fn sendto(self: *Socket, dest: std.net.Address, buf: []const u8) os.SendToError!usize {
-        return try os.sendto(self.fd, buf, 0, &dest.any, dest.getOsSockLen());
+    pub fn sendto(self: *Socket, dest: std.net.Address, buf: []const u8) std.posix.SendToError!usize {
+        return try std.posix.sendto(self.fd, buf, 0, &dest.any, dest.getOsSockLen());
     }
 
-    pub fn recvfrom(self: *Socket, buf: []u8, sender: *std.net.Address) os.RecvFromError!usize {
-        var src_addr: os.sockaddr = undefined;
-        var len = @as(os.socklen_t, @intCast(@sizeOf(os.sockaddr.in)));
-        const size = os.recvfrom(self.fd, buf, 0, &src_addr, &len) catch |err| switch (err) {
-            os.RecvFromError.WouldBlock => return 0,
+    pub fn recvfrom(self: *Socket, buf: []u8, sender: *std.net.Address) std.posix.RecvFromError!usize {
+        var src_addr: std.posix.sockaddr = undefined;
+        var len = @as(std.posix.socklen_t, @intCast(@sizeOf(std.posix.sockaddr.in)));
+        const size = std.posix.recvfrom(self.fd, buf, 0, &src_addr, &len) catch |err| switch (err) {
+            std.posix.RecvFromError.WouldBlock => return 0,
             else => return err,
         };
         sender.* = .{ .any = src_addr };

@@ -133,7 +133,7 @@ pub fn main() void {
                         },
                     }
                 } else |err| switch (err) {
-                    std.os.RecvFromError.ConnectionResetByPeer => {},
+                    std.posix.RecvFromError.ConnectionResetByPeer => {},
                     else => {
                         std.debug.print("packet error: {}\n", .{err});
                     },
