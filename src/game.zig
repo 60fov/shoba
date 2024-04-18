@@ -11,12 +11,12 @@ const AssetId = asset.AssetId;
 const ModelAnimationState = asset.ModelAnimationState;
 
 pub const State = struct {
-    ground: asset.Model = undefined,
+    ground: AssetId = undefined,
     camera: Camera = undefined,
 
     time: f32 = 0,
     entities: EntitySoA = undefined,
-    main_entity_id: EntityId,
+    main_entity_id: EntityId = 0,
 
     pub fn init() State {
         var entities = EntitySoA{};
@@ -32,7 +32,7 @@ pub const State = struct {
         }); // 1
 
         return State{
-            .ground = asset.getByName("dev_ground").model,
+            .ground = asset.getId("dev_ground"),
             .camera = Camera{ .target = 1 },
             .entities = entities,
             .main_entity_id = 1,
@@ -109,7 +109,8 @@ pub fn draw(prev_state: *const State, next_state: *const State, alpha: f32) void
     const rl_cam = getRaylibCamera(&state);
     c.BeginMode3D(rl_cam);
     {
-        c.DrawModel(state.ground.rl_model, c.Vector3Zero(), 1, c.WHITE);
+        const ground = asset.getById(state.ground).model;
+        c.DrawModel(ground.rl_model, c.Vector3Zero(), 1, c.WHITE);
         const entity_slice = state.entities.slice();
         for (0..entity_slice.len) |ent_id| {
             const entity = entity_slice.get(ent_id);

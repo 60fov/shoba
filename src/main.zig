@@ -3,10 +3,10 @@ const c = @import("c.zig");
 
 const global = @import("global.zig");
 const input = @import("input.zig");
-const ui = @import("ui.zig");
 const game = @import("game.zig");
 const asset = @import("asset.zig");
 const graphics = @import("graphics.zig");
+const net = @import("net.zig");
 
 const Asset = asset.Asset;
 
@@ -27,7 +27,6 @@ pub fn main() void {
     defer asset.deinit();
 
     rng.init();
-    ui.init();
 
     // load assets
     {
@@ -62,7 +61,86 @@ pub fn main() void {
     var delta: i128 = 0;
     var alpha: f32 = 0;
 
+    var socket = net.Socket.socket(.{}) catch unreachable;
+    defer socket.close();
+    socket.bindAny(global.mem.fba_allocator) catch unreachable;
+    std.debug.print("socket: {}\n", .{socket.address});
+
+    // var peer_conn_nano: f32, // the system time (std.time.nano) of the peer
+    var last_recv_pckt_nano: i128 = 0;
+    // var last_sent_pckt_nano: i128 = 0;
+    var last_conn_pckt_nano: i128 = 0;
+    const peer_address: std.net.Address = std.net.Address.parseIp4("172.16.4.10", 0xbeef) catch unreachable;
+
     while (!c.WindowShouldClose()) {
+        // network
+        {
+            // time since last packet
+            const now = std.time.nanoTimestamp();
+            const pckt_recv_dt = now - last_recv_pckt_nano;
+            // const pckt_send_dt = now - last_sent_pckt_nano;
+            const pckt_conn_dt = now - last_conn_pckt_nano;
+
+            if (pckt_recv_dt > net.Connection.timeout_duration and pckt_conn_dt > net.Connection.conn_timer) {
+                // attempt to establish connection
+                var pckt_buff = net.PacketBuffer{
+                    .data = global.mem.scratch_buffer[0..1024],
+                };
+
+                pckt_buff.write(u8, @intFromEnum(net.Packet.Tag.conn));
+                pckt_buff.write(u32, net.proto_id);
+
+                if (socket.sendto(peer_address, pckt_buff.data)) |_| {
+                    std.debug.print("connecting to {}\n", .{peer_address});
+                } else |err| {
+                    std.debug.print("failed to send packet: {}\n", .{err});
+                }
+                last_conn_pckt_nano = now;
+            }
+
+            // send packets
+            {
+                // send input (action) delta (next_state_actions - prev_state_actions) (probably need map of actions rather than keystates)
+                //
+            }
+
+            // recv packets
+            // collect all game state packets
+            // perform "dead reckoning" between server state and client state
+            {
+                var peer_addr: std.net.Address = undefined;
+                var buff: [1024]u8 = undefined;
+                while (socket.recvfrom(&buff, &peer_addr)) |pckt_size| {
+                    if (pckt_size == 0) break;
+                    last_recv_pckt_nano = std.time.nanoTimestamp();
+
+                    var pckt_buff = net.PacketBuffer{
+                        .data = buff[0..pckt_size],
+                    };
+
+                    const tag: net.Packet.Tag = @enumFromInt(pckt_buff.read(u8));
+
+                    switch (tag) {
+                        .ping => {
+                            std.debug.print("{}: ping\n", .{peer_addr});
+                        },
+                        .conn => {
+                            const proto_id = pckt_buff.read(u32);
+                            std.debug.print("{}: connection, proto_id {x}\n", .{ peer_addr, proto_id });
+                        },
+                        else => {
+                            std.debug.print("{}: unhandled\n", .{peer_addr});
+                        },
+                    }
+                } else |err| switch (err) {
+                    std.os.RecvFromError.ConnectionResetByPeer => {},
+                    else => {
+                        std.debug.print("packet error: {}\n", .{err});
+                    },
+                }
+            }
+        }
+
         // game time step
         {
             const now = std.time.nanoTimestamp();

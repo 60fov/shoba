@@ -1,81 +1,48 @@
 const std = @import("std");
 const os = std.os;
+const input = @import("input.zig");
+
+pub const proto_id: u32 = 0xbeef;
+
+pub const Connection = struct {
+    pub const timeout_duration = 3 * std.time.ns_per_s;
+    pub const conn_timer = 1 * std.time.ns_per_s;
+    pub const ping_timer = 1 * std.time.ns_per_s;
+
+    last_pckt_nano: i128 = 0,
+    peer_conn_nano: f32, // the system time (std.time.nano) of the peer
+    peer_address: std.net.Address,
+    // socket: Socket,
+};
 
 pub const Packet = struct {
-    data: Data,
+    data: PacketData,
 
     pub const Tag = enum {
         never,
 
         ping, // client and server send
+        conn,
+
+        // user_input,
     };
 
-    pub const Data = union(Tag) {
+    pub const PacketData = union(Tag) {
         never: void,
-        ping: Ping,
+        ping: PingData,
+        conn: ConnectionData,
     };
 
-    pub const Ping = struct {
-        pub fn write(self: *const Ping, buffer: *Buffer) void {
-            _ = self;
-            buffer.write(u8, @intFromEnum(Tag.ping));
-        }
+    pub const PingData = struct {};
+
+    pub const ConnectionData = struct {
+        proto_id: u32 = proto_id,
     };
 
-    pub const Buffer = struct {
-        data: []u8,
-        index: usize,
-
-        pub fn write(self: *Buffer, comptime T: type, value: T) void {
-            switch (T) {
-                u8, u16, u32, i8, i16, i32 => {
-                    const size = @sizeOf(T);
-                    std.debug.assert(self.index + size <= self.data.len);
-
-                    const dest = self.data[self.index..][0..size];
-                    std.mem.writeInt(T, dest, value, .little);
-                    self.index += size;
-                },
-                f16, f32 => {
-                    const size = @sizeOf(T);
-                    const IntType = std.meta.Int(.unsigned, @bitSizeOf(T));
-                    std.debug.assert(self.index + size <= self.data.len);
-
-                    const dest = self.data[self.index..][0..size];
-                    std.mem.writeInt(IntType, dest, @as(IntType, @bitCast(value)), .little);
-                    self.index += size;
-                },
-                else => @compileError("packet buffer write, unhandled type " ++ @typeName(T)),
-            }
-        }
-
-        pub fn read(self: *Buffer, comptime T: type) T {
-            switch (T) {
-                u8, u16, u32, i8, i16, i32 => {
-                    const size = @sizeOf(T);
-                    std.debug.assert(self.index + size <= self.data.len);
-
-                    const src = self.data[self.index..][0..size];
-                    self.index += size;
-                    return std.mem.readInt(T, src, .little);
-                },
-                f16, f32 => {
-                    const size = @sizeOf(T);
-                    const IntType = std.meta.Int(.unsigned, @bitSizeOf(T));
-                    std.debug.assert(self.index + size < self.data.len);
-
-                    const src = self.data[self.index..][0..size];
-                    self.index += size;
-                    // TODO consider making readFloat function
-                    return @bitCast(std.mem.readInt(IntType, src, .little));
-                },
-                else => @compileError("packet buffer read, unhandled type " ++ @typeName(T)),
-            }
-        }
-    };
+    pub const UserInputData = struct {};
 
     pub fn read(self: *Packet, buffer: []u8) !void {
-        var buff = Buffer{
+        var buff = PacketBuffer{
             .data = buffer,
             .index = 0,
         };
@@ -83,31 +50,87 @@ pub const Packet = struct {
 
         switch (tag) {
             .ping => {
-                self.* = .{ .data = .{ .ping = .{} } };
+                self.* = Packet{ .data = .{ .ping = .{} } };
+            },
+            .conn => {
+                self.* = Packet{ .data = .{ .conn = .{} } };
             },
             else => return error.PacketReadUnhandledTag,
         }
     }
 
     pub fn write(self: *const Packet, buffer: []u8) !void {
-        var buff = Buffer{
+        var buff = PacketBuffer{
             .data = buffer,
             .index = 0,
         };
 
+        buff.write(u8, @intFromEnum(self.data));
         switch (self.data) {
-            .ping => {
-                self.data.ping.write(&buff);
+            .ping => {},
+            .conn => {
+                buff.write(u32, proto_id);
             },
             else => return error.PacketWriteUnhandledTag,
         }
     }
 };
 
+pub const PacketBuffer = struct {
+    data: []u8,
+    index: usize = 0,
+
+    pub fn write(self: *PacketBuffer, comptime T: type, value: T) void {
+        switch (T) {
+            u8, u16, u32, i8, i16, i32 => {
+                const size = @sizeOf(T);
+                std.debug.assert(self.index + size <= self.data.len);
+
+                const dest = self.data[self.index..][0..size];
+                std.mem.writeInt(T, dest, value, .little);
+                self.index += size;
+            },
+            f16, f32 => {
+                const size = @sizeOf(T);
+                const IntType = std.meta.Int(.unsigned, @bitSizeOf(T));
+                std.debug.assert(self.index + size <= self.data.len);
+
+                const dest = self.data[self.index..][0..size];
+                std.mem.writeInt(IntType, dest, @as(IntType, @bitCast(value)), .little);
+                self.index += size;
+            },
+            else => @compileError("packet buffer write, unhandled type " ++ @typeName(T)),
+        }
+    }
+
+    pub fn read(self: *PacketBuffer, comptime T: type) T {
+        switch (T) {
+            u8, u16, u32, i8, i16, i32 => {
+                const size = @sizeOf(T);
+                std.debug.assert(self.index + size <= self.data.len);
+
+                const src = self.data[self.index..][0..size];
+                self.index += size;
+                return std.mem.readInt(T, src, .little);
+            },
+            f16, f32 => {
+                const size = @sizeOf(T);
+                const IntType = std.meta.Int(.unsigned, @bitSizeOf(T));
+                std.debug.assert(self.index + size < self.data.len);
+
+                const src = self.data[self.index..][0..size];
+                self.index += size;
+                // TODO consider making readFloat function
+                return @bitCast(std.mem.readInt(IntType, src, .little));
+            },
+            else => @compileError("packet buffer read, unhandled type " ++ @typeName(T)),
+        }
+    }
+};
+
 pub const Socket = struct {
-    fd: ?os.socket_t = null,
-    address: ?std.net.Address = null,
-    options: Options = .{},
+    fd: os.socket_t,
+    address: std.net.Address,
 
     pub const SocketError = error{
         NoFileDescriptor,
@@ -120,7 +143,7 @@ pub const Socket = struct {
         INET6 = os.AF.INET6,
     };
 
-    pub const Options = struct {
+    pub const SocketOptions = struct {
         family: Family = .INET,
         reuse_address: bool = true,
         reuse_port: bool = true,
@@ -131,7 +154,9 @@ pub const Socket = struct {
         size: usize,
     };
 
-    pub fn socket(self: *Socket, options: Options) !void {
+    /// only creates the socket's file descriptor,
+    /// call `bind` to set the socket's address
+    pub fn socket(options: SocketOptions) !Socket {
         const sockfd = try os.socket(
             @intFromEnum(options.family),
             os.SOCK.DGRAM | os.SOCK.NONBLOCK,
@@ -157,112 +182,83 @@ pub const Socket = struct {
             );
         }
 
-        self.fd = sockfd;
+        return Socket{
+            .fd = sockfd,
+            .address = undefined,
+        };
     }
 
-    pub fn sendto(self: *Socket, dest: std.net.Address, buf: []const u8) !usize {
-        if (self.fd) |fd| {
-            return try os.sendto(fd, buf, 0, &dest.any, dest.getOsSockLen());
-        } else {
-            return SocketError.NoFileDescriptor;
-        }
+    /// must be called after `socket`
+    pub fn bind(self: *Socket, address: std.net.Address) (os.BindError || os.GetSockNameError)!void {
+        var sock_len = address.getOsSockLen();
+        try os.bind(self.fd, &address.any, sock_len);
+
+        var sock_name: os.sockaddr = undefined;
+        try os.getsockname(self.fd, &sock_name, &sock_len);
+        self.address = std.net.Address{ .any = sock_name };
     }
 
-    // TODO i dont like msg info, would pref to have same interface as os recvfrom or not use this at all.
-    pub fn recvfrom(self: *Socket, buf: []u8, sender: *std.net.Address) !usize {
-        if (self.fd) |fd| {
-            var src_addr: os.sockaddr = undefined;
-            var len = @as(os.socklen_t, @intCast(@sizeOf(os.sockaddr.in)));
-            const size = try os.recvfrom(fd, buf, 0, &src_addr, &len);
-            sender.* = .{ .any = src_addr };
-            return size;
-        } else {
-            return SocketError.NoFileDescriptor;
-        }
-    }
+    pub fn bindAny(self: *Socket, allocator: std.mem.Allocator) !void {
+        const list = try std.net.getAddressList(allocator, "", 0);
+        defer list.deinit();
 
-    // TODO actual data validation
-    pub fn recvPacket(self: *Socket, address: *std.net.Address) !Packet {
-        var buff: [@sizeOf(Packet.Data)]u8 = undefined;
-        const size = try self.recvfrom(&buff, address);
-
-        if (size < buff.len) return error.PacketRecievedIncomplete;
-
-        var packet: Packet = undefined;
-        try packet.read(&buff);
-
-        return packet;
-    }
-
-    pub fn sendPacket(self: *Socket, packet: *const Packet, address: std.net.Address) !void {
-        var buff: [@sizeOf(Packet.Data)]u8 = undefined;
-        try packet.write(&buff);
-        const size = try self.sendto(address, &buff);
-        if (size < buff.len) return error.PacketSentIncomplete;
-    }
-
-    pub fn bind(self: *Socket) !void {
-        if (self.fd) |fd| {
-            if (self.address) |address| {
-                const socklen = address.getOsSockLen();
-                try os.bind(fd, &address.any, socklen);
-                try self.name();
-            } else {
-                return SocketError.BindNullAddress;
+        // get first ipv4 or crash if none found
+        const address = ip: {
+            for (list.addrs) |addr| {
+                if (addr.any.family == os.AF.INET) break :ip addr;
             }
-        } else {
-            return SocketError.NoFileDescriptor;
-        }
-    }
+            std.debug.print("no ipv4 address available\n", .{});
+            unreachable;
+        };
 
-    // TODO test
-    pub fn bindAlloc(self: *Socket, allocator: std.mem.Allocator) !void {
-        if (self.fd) |fd| {
-            const address = if (self.address) |addr|
-                addr
-            else blk: {
-                const list = try std.net.getAddressList(allocator, "", 0);
-                defer list.deinit();
-                for (list.addrs) |addr| {
-                    if (addr.any.family == @intFromEnum(self.options.family)) break :blk addr;
-                }
-                return SocketError.NoAddressWithFamily;
-            };
-            const socklen = address.getOsSockLen();
-            try os.bind(fd, &address.any, socklen);
-            try self.name();
-        } else {
-            return SocketError.NoFileDescriptor;
-        }
-    }
+        var sock_len = address.getOsSockLen();
+        try os.bind(self.fd, &address.any, sock_len);
 
-    pub fn name(self: *Socket) !void {
-        self.address = try self.getName();
-    }
-
-    pub fn getName(self: *Socket) !std.net.Address {
-        if (self.fd) |fd| {
-            var sock_name: os.sockaddr = undefined;
-            var sock_len: os.socklen_t = switch (self.options.family) {
-                .INET => @sizeOf(os.sockaddr.in),
-                .INET6 => @sizeOf(os.sockaddr.in6),
-            };
-            try os.getsockname(fd, &sock_name, &sock_len);
-            return std.net.Address{ .any = sock_name };
-        } else {
-            return SocketError.NoFileDescriptor;
-        }
+        var sock_name: os.sockaddr = undefined;
+        try os.getsockname(self.fd, &sock_name, &sock_len);
+        self.address = std.net.Address{ .any = sock_name };
     }
 
     pub fn close(self: *Socket) void {
-        if (self.fd) |fd| {
-            os.close(fd);
-            self.fd = null;
-            self.address = null;
-        }
-
+        os.close(self.fd);
         self.* = undefined;
     }
+
+    pub fn sendto(self: *Socket, dest: std.net.Address, buf: []const u8) os.SendToError!usize {
+        return try os.sendto(self.fd, buf, 0, &dest.any, dest.getOsSockLen());
+    }
+
+    pub fn recvfrom(self: *Socket, buf: []u8, sender: *std.net.Address) os.RecvFromError!usize {
+        var src_addr: os.sockaddr = undefined;
+        var len = @as(os.socklen_t, @intCast(@sizeOf(os.sockaddr.in)));
+        const size = os.recvfrom(self.fd, buf, 0, &src_addr, &len) catch |err| switch (err) {
+            os.RecvFromError.WouldBlock => return 0,
+            else => return err,
+        };
+        sender.* = .{ .any = src_addr };
+        return size;
+    }
+
+    // // TODO actual data validation
+    // pub fn recvPacket(self: *Socket, packet: *Packet, address: *std.net.Address) !void {
+    //     var buff: [@sizeOf(Packet)]u8 = undefined;
+    //     const size = try self.recvfrom(&buff, address);
+
+    //     if (size < buff.len) return error.PacketRecievedIncomplete;
+
+    //     // var packet: Packet = undefined;
+    //     try packet.read(&buff);
+
+    //     // return packet;
+    // }
+
+    // pub fn sendPacket(self: *Socket, packet: *const Packet, address: std.net.Address) !void {
+    //     var buff: [@sizeOf(Packet.PacketData)]u8 = undefined;
+    //     try packet.write(&buff);
+    //     const size = try self.sendto(address, &buff);
+    //     if (size < buff.len) return error.PacketSentIncomplete;
+    // }
+
 };
 
 test "socket" {

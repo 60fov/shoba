@@ -98,7 +98,7 @@ pub const ModelAnimation = struct {
     }
 
     pub fn deinit(self: *ModelAnimation) void {
-        c.UnloadModelAnimations(self.animations.ptr, self.animations.len);
+        c.UnloadModelAnimations(self.animations.ptr, @intCast(self.animation_count));
         self.* = undefined;
     }
 };

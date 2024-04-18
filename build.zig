@@ -44,4 +44,22 @@ pub fn build(b: *std.Build) !void {
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
+
+    const server_exe = b.addExecutable(.{
+        .name = "server",
+        .root_source_file = .{ .path = "src/server.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
+    server_exe.addIncludePath(.{ .path = "lib/raylib/src/" });
+    server_exe.linkLibrary(raylib);
+
+    const server_build_step = b.step("server", "build the server");
+    const server_install = b.addInstallArtifact(server_exe, .{});
+    server_build_step.dependOn(&server_install.step);
+
+    const server_run = b.addRunArtifact(server_exe);
+    const server_run_step = b.step("serve", "build and run the server");
+    server_run.step.dependOn(server_build_step);
+    server_run_step.dependOn(&server_run.step);
 }
