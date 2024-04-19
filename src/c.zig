@@ -35,7 +35,7 @@ pub const win32 = struct {
 ///
 /// https://learn.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-gethostname#remarks
 const HOST_NAME_MAX_WINDOWS = 256;
-const HOST_NAME_MAX = if (builtin.os.tag == .windows) HOST_NAME_MAX_WINDOWS else std.posix.HOST_NAME_MAX;
+pub const HOST_NAME_MAX = if (builtin.os.tag == .windows) HOST_NAME_MAX_WINDOWS else std.posix.HOST_NAME_MAX;
 
 pub fn gethostname(name_buffer: *[HOST_NAME_MAX]u8) std.posix.GetHostNameError![]u8 {
     if (builtin.os.tag == .windows) {

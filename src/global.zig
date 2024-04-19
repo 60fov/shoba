@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const c = @import("c.zig");
+
 pub const dev_build = builtin.mode == .Debug;
 
 pub const window_width = 800;
@@ -38,7 +40,12 @@ pub fn init(alloctr: std.mem.Allocator) !void {
         asset_dir = try std.fs.openDirAbsolute(asset_dir_path, .{});
     }
 
-    address_list = std.net.getAddressList(mem.fba_allocator, "", 0) catch unreachable;
+    // (WSAStartup)
+    address_list = std.net.getAddressList(mem.fba_allocator, "localhost", 0) catch unreachable;
+    address_list.deinit();
+
+    const host_name = c.gethostname(mem.scratch_buffer[0..c.HOST_NAME_MAX]) catch unreachable;
+    address_list = std.net.getAddressList(mem.fba_allocator, host_name, 0) catch unreachable;
 
     local_address = getaddr: {
         for (address_list.addrs) |addr| {
