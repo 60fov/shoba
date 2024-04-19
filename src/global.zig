@@ -8,6 +8,8 @@ pub const window_height = 600;
 pub const tick_rate = 64;
 
 var asset_dir: std.fs.Dir = undefined;
+var address_list: *std.net.AddressList = undefined;
+pub var local_address: std.net.Address = undefined;
 
 pub const mem = struct {
     pub const scratch_buffer_size = 5 * 1024 * 1024;
@@ -35,9 +37,22 @@ pub fn init(alloctr: std.mem.Allocator) !void {
         defer mem.fba_allocator.free(asset_dir_path);
         asset_dir = try std.fs.openDirAbsolute(asset_dir_path, .{});
     }
+
+    address_list = std.net.getAddressList(mem.fba_allocator, "", 0) catch unreachable;
+
+    local_address = getaddr: {
+        for (address_list.addrs) |addr| {
+            // std.debug.print("addr{}: {}\n", .{ i, addr });
+            if (addr.any.family == std.posix.AF.INET) {
+                break :getaddr addr;
+            }
+        }
+        unreachable;
+    };
 }
 
 pub fn deinit(alloctr: std.mem.Allocator) void {
+    address_list.deinit();
     alloctr.free(mem.fba_buffer);
     mem.fba = undefined;
     mem.fba_allocator = undefined;

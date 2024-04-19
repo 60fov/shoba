@@ -1,4 +1,7 @@
 const std = @import("std");
+const builtin = @import("builtin");
+
+const c = @import("c.zig");
 const input = @import("input.zig");
 
 pub const proto_id: u32 = 0xbeef;
@@ -257,7 +260,6 @@ pub const Socket = struct {
     //     const size = try self.sendto(address, &buff);
     //     if (size < buff.len) return error.PacketSentIncomplete;
     // }
-
 };
 
 test "socket" {

@@ -7,6 +7,7 @@ const game = @import("game.zig");
 const asset = @import("asset.zig");
 const graphics = @import("graphics.zig");
 const net = @import("net.zig");
+const server = @import("server.zig");
 
 const Asset = asset.Asset;
 
@@ -63,6 +64,7 @@ pub fn main() void {
 
     var socket = net.Socket.socket(.{}) catch unreachable;
     defer socket.close();
+
     socket.bindAny(global.mem.fba_allocator) catch unreachable;
     std.debug.print("socket: {}\n", .{socket.address});
 
@@ -70,7 +72,8 @@ pub fn main() void {
     var last_recv_pckt_nano: i128 = 0;
     // var last_sent_pckt_nano: i128 = 0;
     var last_conn_pckt_nano: i128 = 0;
-    const peer_address: std.net.Address = std.net.Address.parseIp4("172.16.4.10", 0xbeef) catch unreachable;
+    var peer_address = global.local_address;
+    peer_address.setPort(server.port);
 
     while (!c.WindowShouldClose()) {
         // network

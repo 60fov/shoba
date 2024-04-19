@@ -6,11 +6,15 @@ const game = @import("game.zig");
 
 // TODO get tickrate from command line
 
+pub const port = 0xbeef;
+
 pub fn main() void {
     global.init(std.heap.page_allocator) catch unreachable;
     defer global.deinit(std.heap.page_allocator) catch unreachable;
 
-    const address = std.net.Address.parseIp4("172.16.4.10", 0xbeef) catch unreachable;
+    var address = global.local_address;
+    address.setPort(port);
+
     var socket = net.Socket.socket(.{}) catch unreachable;
     socket.bind(address) catch unreachable;
     std.debug.print("open connection @ {}\n", .{socket.address});
