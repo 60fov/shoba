@@ -65,7 +65,7 @@ pub fn main() void {
     var socket = net.Socket.socket(.{}) catch unreachable;
     defer socket.close();
 
-    socket.bindAny(global.mem.fba_allocator) catch unreachable;
+    socket.bind(null) catch unreachable;
     std.debug.print("socket: {}\n", .{socket.address});
 
     // var peer_conn_nano: f32, // the system time (std.time.nano) of the peer

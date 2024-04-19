@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 
 const c = @import("c.zig");
 const input = @import("input.zig");
+const global = @import("global.zig");
 
 pub const proto_id: u32 = 0xbeef;
 
@@ -191,30 +192,10 @@ pub const Socket = struct {
     }
 
     /// must be called after `socket`
-    pub fn bind(self: *Socket, address: std.net.Address) (std.posix.BindError || std.posix.GetSockNameError)!void {
-        var sock_len = address.getOsSockLen();
-        try std.posix.bind(self.fd, &address.any, sock_len);
-
-        var sock_name: std.posix.sockaddr = undefined;
-        try std.posix.getsockname(self.fd, &sock_name, &sock_len);
-        self.address = std.net.Address{ .any = sock_name };
-    }
-
-    pub fn bindAny(self: *Socket, allocator: std.mem.Allocator) !void {
-        const list = try std.net.getAddressList(allocator, "", 0);
-        defer list.deinit();
-
-        // get first ipv4 or crash if none found
-        const address = ip: {
-            for (list.addrs) |addr| {
-                if (addr.any.family == std.posix.AF.INET) break :ip addr;
-            }
-            std.debug.print("no ipv4 address available\n", .{});
-            unreachable;
-        };
-
-        var sock_len = address.getOsSockLen();
-        try std.posix.bind(self.fd, &address.any, sock_len);
+    pub fn bind(self: *Socket, address: ?std.net.Address) (std.posix.BindError || std.posix.GetSockNameError)!void {
+        const addr = address orelse global.local_address;
+        var sock_len = addr.getOsSockLen();
+        try std.posix.bind(self.fd, &addr.any, sock_len);
 
         var sock_name: std.posix.sockaddr = undefined;
         try std.posix.getsockname(self.fd, &sock_name, &sock_len);
