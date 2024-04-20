@@ -8,97 +8,169 @@ const global = @import("global.zig");
 pub const proto_id: u32 = 0xbeef;
 
 pub const Connection = struct {
-    pub const timeout_duration = 3 * std.time.ns_per_s;
-    pub const conn_timer = 1 * std.time.ns_per_s;
-    pub const ping_timer = 1 * std.time.ns_per_s;
-
-    last_pckt_nano: i128 = 0,
-    peer_conn_nano: f32, // the system time (std.time.nano) of the peer
+    socket: Socket,
     peer_address: std.net.Address,
-    // socket: Socket,
+
+    local_seq: u32 = 0,
+    remote_seq: u32 = 0,
+
+    pub fn sendPacket(self: *Connection, pckt_body: *const PacketBody) PacketSendError!void {
+        var buff: [PacketBuffer.mem_size]u8 = undefined;
+        var pckt_buff = PacketBuffer{
+            .buffer = buff[0..],
+        };
+
+        // write packet header info
+        const seq = self.local_seq;
+        const ack = self.remote_seq;
+        const ack_history = 0;
+
+        pckt_buff.write(u32, proto_id);
+        pckt_buff.write(u32, seq);
+        pckt_buff.write(u32, ack);
+        pckt_buff.write(u32, ack_history);
+
+        // write packet body info
+        const tag = @intFromEnum(pckt_body.*);
+        pckt_buff.write(u8, tag);
+        switch (pckt_body.*) {
+            .ping => {},
+        }
+
+        // write crc32 of packet in-place of the protocol id
+        const crc = std.hash.Crc32.hash(pckt_buff.buffer);
+        @memcpy(pckt_buff.buffer[0..4], std.mem.asBytes(&crc));
+
+        _ = self.socket.sendto(self.peer_address, pckt_buff.filledSlice()) catch |err| switch (err) {
+            std.posix.SendToError.UnreachableAddress => return PacketSendError.UnreachableAddress,
+            std.posix.SendToError.SocketNotConnected => unreachable,
+            std.posix.SendToError.AddressNotAvailable => unreachable,
+            else => return PacketSendError.UnexpectError,
+        };
+        self.local_seq += 1;
+    }
+
+    pub fn acceptPacket(self: *Connection, packet: *const Packet) void {
+        if (packet.header.seq > self.remote_seq) self.remote_seq = packet.header.seq;
+    }
+
+    pub fn recvPacket(socket: Socket, peer_address: *std.net.Address) PacketRecvError!Packet {
+        var buff: [PacketBuffer.mem_size]u8 = undefined;
+        while (socket.recvfrom(&buff, peer_address)) |pckt_size| {
+            if (pckt_size == 0) unreachable;
+
+            var pckt_buff = PacketBuffer{
+                .buffer = buff[0..pckt_size],
+            };
+
+            const pckt_crc = pckt_buff.read(u32);
+            const crc_is_valid = crc_cmp: {
+                // read crc from pckt_buff (incoming packet data)
+                // replace crc section of pckt_buff (first 4 bytes) with protocol id
+                // recalc crc hash of packet then compare
+                @memcpy(buff[0..4], std.mem.asBytes(&proto_id));
+                const local_crc = std.hash.Crc32.hash(pckt_buff.buffer);
+                break :crc_cmp pckt_crc != local_crc;
+            };
+
+            if (crc_is_valid) {
+                const header = PacketHeader{
+                    .crc = pckt_crc,
+                    .seq = pckt_buff.read(u32),
+                    .ack = pckt_buff.read(u32),
+                    .ack_history = pckt_buff.read(u32),
+                };
+
+                const tag: PacketBodyTag = @enumFromInt(pckt_buff.read(u8));
+
+                var body: PacketBody = undefined;
+                switch (tag) {
+                    .ping => {
+                        body = .{ .ping = {} };
+                    },
+                    // else => {
+                    //     std.debug.print("unhandled packet body tag\n", .{tag});
+                    // },
+                }
+
+                return Packet{
+                    .header = header,
+                    .body = body,
+                };
+            } else {
+                return PacketRecvError.InvalidCrc;
+            }
+        } else |err| switch (err) {
+            // investigate
+            std.posix.RecvFromError.ConnectionResetByPeer => return PacketRecvError.EndOfPackets,
+            // no data
+            std.posix.RecvFromError.WouldBlock => return PacketRecvError.EndOfPackets,
+            else => {
+                std.debug.print("unhandled packet error: {}\n", .{err});
+                return PacketRecvError.UnexpectError;
+            },
+        }
+    }
+};
+
+pub const PacketRecvError = error{
+    InvalidCrc,
+    /// not really an error
+    EndOfPackets,
+    UnexpectError,
+};
+
+pub const PacketSendError = error{
+    UnreachableAddress,
+    UnexpectError,
+};
+
+pub const PacketHeader = struct {
+    crc: u32, // crc32(protocol id + packet) (packet not including crc32, ofc)
+    seq: u32, // this packet's id
+    ack: u32, // id of last packet recv'd
+    ack_history: u32, // bitfield of last 32 acks
+};
+
+pub const PacketBodyTag = enum(u8) {
+    ping,
+};
+
+pub const PacketBody = union(PacketBodyTag) {
+    ping: void,
 };
 
 pub const Packet = struct {
-    data: PacketData,
+    header: PacketHeader,
+    body: PacketBody,
 
-    pub const Tag = enum {
-        never,
-
-        ping, // client and server send
-        conn,
-
-        // user_input,
-    };
-
-    pub const PacketData = union(Tag) {
-        never: void,
-        ping: PingData,
-        conn: ConnectionData,
-    };
-
-    pub const PingData = struct {};
-
-    pub const ConnectionData = struct {
-        proto_id: u32 = proto_id,
-    };
-
-    pub const UserInputData = struct {};
-
-    pub fn read(self: *Packet, buffer: []u8) !void {
-        var buff = PacketBuffer{
-            .data = buffer,
-            .index = 0,
-        };
-        const tag: Tag = @enumFromInt(buff.read(u8));
-
-        switch (tag) {
-            .ping => {
-                self.* = Packet{ .data = .{ .ping = .{} } };
-            },
-            .conn => {
-                self.* = Packet{ .data = .{ .conn = .{} } };
-            },
-            else => return error.PacketReadUnhandledTag,
-        }
-    }
-
-    pub fn write(self: *const Packet, buffer: []u8) !void {
-        var buff = PacketBuffer{
-            .data = buffer,
-            .index = 0,
-        };
-
-        buff.write(u8, @intFromEnum(self.data));
-        switch (self.data) {
-            .ping => {},
-            .conn => {
-                buff.write(u32, proto_id);
-            },
-            else => return error.PacketWriteUnhandledTag,
-        }
+    pub fn deserialize(pckt_buff: PacketBuffer) Packet {
+        const pckt = std.mem.bytesToValue(Packet, pckt_buff.buffer);
+        return pckt;
     }
 };
 
 pub const PacketBuffer = struct {
-    data: []u8,
+    const mem_size = @sizeOf(PacketHeader) + 1024;
+    buffer: []u8,
     index: usize = 0,
 
     pub fn write(self: *PacketBuffer, comptime T: type, value: T) void {
         switch (T) {
             u8, u16, u32, i8, i16, i32 => {
                 const size = @sizeOf(T);
-                std.debug.assert(self.index + size <= self.data.len);
+                std.debug.assert(self.index + size <= self.buffer.len);
 
-                const dest = self.data[self.index..][0..size];
+                const dest = self.buffer[self.index..][0..size];
                 std.mem.writeInt(T, dest, value, .little);
                 self.index += size;
             },
             f16, f32 => {
                 const size = @sizeOf(T);
                 const IntType = std.meta.Int(.unsigned, @bitSizeOf(T));
-                std.debug.assert(self.index + size <= self.data.len);
+                std.debug.assert(self.index + size <= self.buffer.len);
 
-                const dest = self.data[self.index..][0..size];
+                const dest = self.buffer[self.index..][0..size];
                 std.mem.writeInt(IntType, dest, @as(IntType, @bitCast(value)), .little);
                 self.index += size;
             },
@@ -110,24 +182,28 @@ pub const PacketBuffer = struct {
         switch (T) {
             u8, u16, u32, i8, i16, i32 => {
                 const size = @sizeOf(T);
-                std.debug.assert(self.index + size <= self.data.len);
+                std.debug.assert(self.index + size <= self.buffer.len);
 
-                const src = self.data[self.index..][0..size];
+                const src = self.buffer[self.index..][0..size];
                 self.index += size;
                 return std.mem.readInt(T, src, .little);
             },
             f16, f32 => {
                 const size = @sizeOf(T);
                 const IntType = std.meta.Int(.unsigned, @bitSizeOf(T));
-                std.debug.assert(self.index + size < self.data.len);
+                std.debug.assert(self.index + size < self.buffer.len);
 
-                const src = self.data[self.index..][0..size];
+                const src = self.buffer[self.index..][0..size];
                 self.index += size;
                 // TODO consider making readFloat function
                 return @bitCast(std.mem.readInt(IntType, src, .little));
             },
             else => @compileError("packet buffer read, unhandled type " ++ @typeName(T)),
         }
+    }
+
+    pub fn filledSlice(self: *const PacketBuffer) []const u8 {
+        return self.buffer[0..self.index];
     }
 };
 
@@ -207,17 +283,14 @@ pub const Socket = struct {
         self.* = undefined;
     }
 
-    pub fn sendto(self: *Socket, dest: std.net.Address, buf: []const u8) std.posix.SendToError!usize {
+    pub fn sendto(self: *const Socket, dest: std.net.Address, buf: []const u8) std.posix.SendToError!usize {
         return try std.posix.sendto(self.fd, buf, 0, &dest.any, dest.getOsSockLen());
     }
 
-    pub fn recvfrom(self: *Socket, buf: []u8, sender: *std.net.Address) std.posix.RecvFromError!usize {
+    pub fn recvfrom(self: *const Socket, buf: []u8, sender: *std.net.Address) std.posix.RecvFromError!usize {
         var src_addr: std.posix.sockaddr = undefined;
         var len = @as(std.posix.socklen_t, @intCast(@sizeOf(std.posix.sockaddr.in)));
-        const size = std.posix.recvfrom(self.fd, buf, 0, &src_addr, &len) catch |err| switch (err) {
-            std.posix.RecvFromError.WouldBlock => return 0,
-            else => return err,
-        };
+        const size = try std.posix.recvfrom(self.fd, buf, 0, &src_addr, &len);
         sender.* = .{ .any = src_addr };
         return size;
     }

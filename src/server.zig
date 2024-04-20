@@ -31,6 +31,8 @@ pub fn main() void {
     const state = global.mem.fba_allocator.create(game.State) catch unreachable;
     state.* = game.State{};
 
+    var clients = std.ArrayList(net.Connection).initCapacity(global.mem.fba_allocator, 3) catch unreachable;
+
     while (true) {
         // game time step
         {
@@ -64,54 +66,38 @@ pub fn main() void {
 
                 // recv packets
                 {
-                    var peer_addr: std.net.Address = undefined;
-                    var buff: [1024]u8 = undefined;
-                    while (socket.recvfrom(&buff, &peer_addr)) |pckt_size| {
-                        if (pckt_size == 0) break;
+                    var peer: std.net.Address = undefined;
+                    while (net.Connection.recvPacket(socket, &peer)) |pckt| {
+                        std.debug.print("pckt, seq: {}, ack: {}\n", .{ pckt.header.seq, pckt.header.ack });
+                        update_clients: {
+                            for (clients.items) |*conn| {
+                                if (conn.peer_address.eql(peer)) {
+                                    conn.acceptPacket(&pckt);
+                                    break :update_clients;
+                                }
+                            }
+                            // client not found
+                            if (clients.items.len < clients.capacity) {
+                                clients.appendAssumeCapacity(net.Connection{
+                                    .peer_address = peer,
+                                    .socket = socket,
+                                });
+                            } else {
+                                std.debug.print("server full\n", .{});
+                            }
+                        }
 
-                        var pckt_buff = net.PacketBuffer{
-                            .data = buff[0..pckt_size],
-                        };
-
-                        const tag: net.Packet.Tag = @enumFromInt(pckt_buff.read(u8));
-
-                        switch (tag) {
+                        switch (pckt.body) {
                             .ping => {
-                                std.debug.print("{}: ping\n", .{peer_addr});
-                            },
-                            .conn => {
-                                const proto_id = pckt_buff.read(u32);
-                                std.debug.print("{}: connection, proto_id {x}\n", .{ peer_addr, proto_id });
-                            },
-                            else => {
-                                std.debug.print("{}: unhandled\n", .{peer_addr});
+                                std.debug.print("{}: ping!\n", .{peer});
                             },
                         }
                     } else |err| switch (err) {
-                        else => {
-                            std.debug.print("packet error: {}\n", .{err});
+                        net.PacketRecvError.EndOfPackets => {},
+                        net.PacketRecvError.InvalidCrc => {
+                            std.debug.print("recv'd invalid packet (crc)\n", .{});
                         },
-                        // A remote host refused to allow the network connection, typically because it is not
-                        // running the requested service.
-                        // .ConnectionRefused => {},
-
-                        // Could not allocate kernel memory.
-                        // .SystemResources => {},
-
-                        // .ConnectionResetByPeer => {},
-                        // .ConnectionTimedOut => {},
-
-                        // The socket has not been bound.
-                        // .SocketNotBound => {},
-
-                        // The UDP message was too big for the buffer and part of it has been discarded
-                        // .MessageTooBig => {},
-
-                        // The network subsystem has failed.
-                        // .NetworkSubsystemFailed => {},
-
-                        // The socket is not connected (connection-oriented sockets only).
-                        // .SocketNotConnected => {},
+                        else => unreachable,
                     }
                 }
             }

@@ -68,79 +68,41 @@ pub fn main() void {
     socket.bind(null) catch unreachable;
     std.debug.print("socket: {}\n", .{socket.address});
 
-    // var peer_conn_nano: f32, // the system time (std.time.nano) of the peer
-    var last_recv_pckt_nano: i128 = 0;
-    // var last_sent_pckt_nano: i128 = 0;
-    var last_conn_pckt_nano: i128 = 0;
-    var peer_address = global.local_address;
-    peer_address.setPort(server.port);
+    var addr = global.local_address;
+    addr.setPort(server.port);
+
+    var server_conn = net.Connection{
+        .peer_address = addr,
+        .socket = socket,
+    };
+
+    var last_ping_time: i128 = 0;
+    const ping_timer = 1 * std.time.ns_per_s;
 
     while (!c.WindowShouldClose()) {
         // network
         {
-            // time since last packet
             const now = std.time.nanoTimestamp();
-            const pckt_recv_dt = now - last_recv_pckt_nano;
-            // const pckt_send_dt = now - last_sent_pckt_nano;
-            const pckt_conn_dt = now - last_conn_pckt_nano;
-
-            if (pckt_recv_dt > net.Connection.timeout_duration and pckt_conn_dt > net.Connection.conn_timer) {
-                // attempt to establish connection
-                var pckt_buff = net.PacketBuffer{
-                    .data = global.mem.scratch_buffer[0..1024],
-                };
-
-                pckt_buff.write(u8, @intFromEnum(net.Packet.Tag.conn));
-                pckt_buff.write(u32, net.proto_id);
-
-                if (socket.sendto(peer_address, pckt_buff.data)) |_| {
-                    std.debug.print("connecting to {}\n", .{peer_address});
+            const ping_dt = now - last_ping_time;
+            if (ping_dt > ping_timer) {
+                const pckt_body = net.PacketBody{ .ping = {} };
+                if (server_conn.sendPacket(&pckt_body)) |_| {
+                    std.debug.print("ping'd server\n", .{});
                 } else |err| {
-                    std.debug.print("failed to send packet: {}\n", .{err});
+                    std.debug.print("failed to send packet {}\n", .{err});
                 }
-                last_conn_pckt_nano = now;
+                last_ping_time = now;
             }
 
             // send packets
             {
                 // send input (action) delta (next_state_actions - prev_state_actions) (probably need map of actions rather than keystates)
-                //
             }
 
             // recv packets
-            // collect all game state packets
-            // perform "dead reckoning" between server state and client state
             {
-                var peer_addr: std.net.Address = undefined;
-                var buff: [1024]u8 = undefined;
-                while (socket.recvfrom(&buff, &peer_addr)) |pckt_size| {
-                    if (pckt_size == 0) break;
-                    last_recv_pckt_nano = std.time.nanoTimestamp();
-
-                    var pckt_buff = net.PacketBuffer{
-                        .data = buff[0..pckt_size],
-                    };
-
-                    const tag: net.Packet.Tag = @enumFromInt(pckt_buff.read(u8));
-
-                    switch (tag) {
-                        .ping => {
-                            std.debug.print("{}: ping\n", .{peer_addr});
-                        },
-                        .conn => {
-                            const proto_id = pckt_buff.read(u32);
-                            std.debug.print("{}: connection, proto_id {x}\n", .{ peer_addr, proto_id });
-                        },
-                        else => {
-                            std.debug.print("{}: unhandled\n", .{peer_addr});
-                        },
-                    }
-                } else |err| switch (err) {
-                    std.posix.RecvFromError.ConnectionResetByPeer => {},
-                    else => {
-                        std.debug.print("packet error: {}\n", .{err});
-                    },
-                }
+                // collect all game state packets
+                // perform "dead reckoning" between server state and client state
             }
         }
 
