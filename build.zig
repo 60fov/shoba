@@ -6,9 +6,9 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const exe = b.addExecutable(.{
-        .name = "shoba",
-        .root_source_file = .{ .path = "src/main.zig" },
+    const exe_client = b.addExecutable(.{
+        .name = "shoba-client",
+        .root_source_file = .{ .path = "src/client.zig" },
         .target = target,
         .optimize = optimize,
     });
@@ -26,39 +26,40 @@ pub fn build(b: *std.Build) !void {
     if (builtin.target.os.tag == .linux) {
         raylib.root_module.addCMacro("_GLFW_X11", "");
     }
-    exe.addIncludePath(.{ .path = "lib/raylib/src/" });
-    exe.addCSourceFile(.{
+    exe_client.addIncludePath(.{ .path = "lib/raylib/src/" });
+    exe_client.addCSourceFile(.{
         .file = .{ .path = "src/raygui_impl.c" },
     });
-    exe.addIncludePath(.{ .path = "lib/raygui/src/" });
-    exe.linkLibrary(raylib);
+    exe_client.addIncludePath(.{ .path = "lib/raygui/src/" });
+    exe_client.linkLibrary(raylib);
 
-    b.installArtifact(exe);
+    b.installArtifact(exe_client);
 
-    const run_cmd = b.addRunArtifact(exe);
-    run_cmd.step.dependOn(b.getInstallStep());
+    const run_client = b.addRunArtifact(exe_client);
+    run_client.step.dependOn(b.getInstallStep());
 
     if (b.args) |args| {
-        run_cmd.addArgs(args);
+        run_client.addArgs(args);
     }
 
-    const run_step = b.step("run", "Run the app");
-    run_step.dependOn(&run_cmd.step);
+    const run_step = b.step("client", "build and run the client");
+    run_step.dependOn(&run_client.step);
 
-    const server_exe = b.addExecutable(.{
-        .name = "server",
+    const exe_server = b.addExecutable(.{
+        .name = "shoba-server",
         .root_source_file = .{ .path = "src/server.zig" },
         .target = target,
         .optimize = optimize,
     });
-    server_exe.addIncludePath(.{ .path = "lib/raylib/src/" });
-    server_exe.linkLibrary(raylib);
+    exe_server.addIncludePath(.{ .path = "lib/raylib/src/" });
+    // TODO remove raylib as server dependency
+    exe_server.linkLibrary(raylib);
 
     const server_build_step = b.step("server", "build the server");
-    const server_install = b.addInstallArtifact(server_exe, .{});
+    const server_install = b.addInstallArtifact(exe_server, .{});
     server_build_step.dependOn(&server_install.step);
 
-    const server_run = b.addRunArtifact(server_exe);
+    const server_run = b.addRunArtifact(exe_server);
     const server_run_step = b.step("serve", "build and run the server");
     server_run.step.dependOn(server_build_step);
     server_run_step.dependOn(&server_run.step);

@@ -205,10 +205,3 @@ pub const RenderFlag = enum(u4) {
     ball,
     model,
 };
-
-// pub const RenderFlag = packed struct(u4) {
-//     none: bool = true,
-//     model: bool = false,
-//     animated_model: bool = false,
-//     shape: bool = false,
-// };
