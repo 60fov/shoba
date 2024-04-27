@@ -4,6 +4,7 @@ const c = @import("c.zig");
 const asset = @import("asset.zig");
 const input = @import("input.zig");
 const global = @import("global.zig");
+const event = @import("event.zig");
 
 const Model = asset.Model;
 const ModelAnimation = asset.ModelAnimation;
@@ -60,34 +61,57 @@ pub fn update(state: *State, ns: i128) void {
     const dt: f32 = @as(f32, @floatFromInt(ns)) / 1e+9;
     state.time += dt;
 
-    // logic
-    {
-        const up = c.Vector2{ .y = -1 };
-        const down = c.Vector2{ .y = 1 };
-        const left = c.Vector2{ .x = -1 };
-        const right = c.Vector2{ .x = 1 };
+    { // update event queue from user input
+        if (input.key(c.KEY_E).isDown())
+            event.push(event.Event{ .input_move = .{ .direction = 0.75 } });
+        if (input.key(c.KEY_S).isDown())
+            event.push(event.Event{ .input_move = .{ .direction = 0.5 } });
+        if (input.key(c.KEY_LEFT_ALT).isDown())
+            event.push(event.Event{ .input_move = .{ .direction = 0.25 } });
+        if (input.key(c.KEY_F).isDown())
+            event.push(event.Event{ .input_move = .{ .direction = 0.0 } });
+    }
+
+    var move_dir: c.Vector2 = .{};
+    var look_dir: c.Vector2 = .{};
+
+    // TODO should this pop
+    for (event.queue) |evt| {
+        switch (evt) {
+            .input_move => |move| {
+                const angle = std.math.pi * 2 * move.direction;
+                move_dir = c.Vector2Add(move_dir, c.Vector2{
+                    .x = std.math.cos(angle),
+                    .y = std.math.sin(angle),
+                });
+            },
+            .input_look => |move| {
+                const angle = std.math.pi * 2 * move.direction;
+                look_dir = c.Vector2{
+                    .x = std.math.cos(angle),
+                    .y = std.math.sin(angle),
+                };
+            },
+            else => {},
+        }
+    }
+
+    { // move direction velocity
         var ent = state.entities.get(state.main_entity_id);
-        var dir: c.Vector2 = .{};
-        if (input.key(c.KEY_E).isDown()) dir = c.Vector2Add(dir, up);
-        if (input.key(c.KEY_S).isDown()) dir = c.Vector2Add(dir, left);
-        if (input.key(c.KEY_LEFT_ALT).isDown()) dir = c.Vector2Add(dir, down);
-        if (input.key(c.KEY_F).isDown()) dir = c.Vector2Add(dir, right);
-        dir = c.Vector2Normalize(dir);
-        const vel = c.Vector2Scale(dir, 10);
+        move_dir = c.Vector2Normalize(move_dir);
+        const vel = c.Vector2Scale(move_dir, 10);
         ent.vel = vel;
         state.entities.set(state.main_entity_id, ent);
     }
 
-    // move
-    {
+    { // apply velocities to positions
         for (state.entities.items(.pos), state.entities.items(.vel)) |*pos, vel| {
             const delta_pos = c.Vector2Scale(vel, dt);
             pos.* = c.Vector2Add(pos.*, delta_pos);
         }
     }
 
-    // animate models
-    {
+    { // animate models and set look direction
         var slice = state.entities.slice();
         for (0..slice.len) |ent_id| {
             var ent = slice.get(ent_id);
@@ -95,7 +119,8 @@ pub fn update(state: *State, ns: i128) void {
                 ent.anim_state.animateModel(&ent.model, &ent.animation);
             }
 
-            const dir = c.Vector2Subtract(ent.pos, getWorldMousePos(state));
+            // const dir = c.Vector2Subtract(ent.pos, getWorldMousePos(state));
+            const dir = look_dir;
             ent.angle = std.math.atan2(-dir.y, dir.x) / (std.math.pi * 2);
 
             slice.set(ent_id, ent);
