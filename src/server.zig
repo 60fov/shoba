@@ -91,6 +91,9 @@ pub fn main() void {
                             .ping => {
                                 std.debug.print("{}: ping!\n", .{peer});
                             },
+                            .event => |evt| {
+                                std.debug.print("{}: event {s}\n", .{ peer, @tagName(evt) });
+                            },
                         }
                     } else |err| switch (err) {
                         net.PacketRecvError.EndOfPackets => {},

@@ -8,6 +8,7 @@ const asset = @import("asset.zig");
 const graphics = @import("graphics.zig");
 const net = @import("net.zig");
 const server = @import("server.zig");
+const event = @import("event.zig");
 
 const Asset = asset.Asset;
 
@@ -45,9 +46,11 @@ pub fn main() void {
 
     std.debug.print("initializing game state... \n", .{});
 
-    const game_state = global.mem.fba_allocator.alloc(game.State, 2) catch unreachable;
+    const game_state = global.mem.fba_allocator.alloc(game.State, 3) catch unreachable;
     const state_prev = &game_state[0];
     const state_next = &game_state[1];
+    const state_server = &game_state[2];
+    var input_events = std.ArrayList(event.Event).initCapacity(global.mem.fba_allocator, event.event_max) catch unreachable;
     defer global.mem.fba_allocator.free(game_state);
 
     state_prev.* = game.State.init();
@@ -76,37 +79,7 @@ pub fn main() void {
         .socket = socket,
     };
 
-    var last_ping_time: i128 = 0;
-    const ping_timer = 1 * std.time.ns_per_s;
-
     while (!c.WindowShouldClose()) {
-        // network
-        {
-            const now = std.time.nanoTimestamp();
-            const ping_dt = now - last_ping_time;
-            if (ping_dt > ping_timer) {
-                const pckt_body = net.PacketBody{ .ping = {} };
-                if (server_conn.sendPacket(&pckt_body)) |_| {
-                    std.debug.print("ping'd server\n", .{});
-                } else |err| {
-                    std.debug.print("failed to send packet {}\n", .{err});
-                }
-                last_ping_time = now;
-            }
-
-            // send packets
-            {
-                // send input (action) delta (next_state_actions - prev_state_actions) (probably need map of actions rather than keystates)
-            }
-
-            // recv packets
-            {
-                // collect all game state packets
-                // perform "dead reckoning" between server state and client state
-            }
-        }
-
-        // game time step
         {
             const now = std.time.nanoTimestamp();
             delta = now - last;
@@ -125,9 +98,14 @@ pub fn main() void {
             }
 
             while (accumulator >= ns) {
-                input.poll();
+                pollInputEvents(state_next, &input_events);
+
+                sendEventsToServer(&server_conn, input_events);
+                recvServerState(state_server);
+                reconcileState(state_server, state_prev, state_next);
+
                 state_prev.* = state_next.*;
-                game.update(state_next, ns);
+                game.update(state_next, ns, &input_events);
                 accumulator -= ns;
             }
         }
@@ -164,47 +142,52 @@ pub fn main() void {
     }
 }
 
-const FPS = struct {
-    const history_size = 30;
-    const update_freq = 0.1 * std.time.ns_per_s;
-    var history: [history_size]i128 = [_]i128{0} ** history_size;
-    var h_idx: usize = 0;
-    var accum: f64 = 0;
-    var last_avg_fps: f64 = 0;
+fn pollInputEvents(state: *const game.State, events: *event.EventList) void {
+    input.poll();
+    events.clearRetainingCapacity();
+    const ent_self = state.entities.get(state.main_entity_id);
+    { // update event queue from user input
+        if (input.key(c.KEY_E).isDown())
+            events.appendAssumeCapacity(event.Event{ .input_move = .{ .direction = 0.75 } });
+        if (input.key(c.KEY_S).isDown())
+            events.appendAssumeCapacity(event.Event{ .input_move = .{ .direction = 0.5 } });
+        if (input.key(c.KEY_LEFT_ALT).isDown())
+            events.appendAssumeCapacity(event.Event{ .input_move = .{ .direction = 0.25 } });
+        if (input.key(c.KEY_F).isDown())
+            events.appendAssumeCapacity(event.Event{ .input_move = .{ .direction = 0.0 } });
 
-    fn pushDelta(dt: i128) void {
-        h_idx = (h_idx + 1) % history_size;
-        history[h_idx] = dt;
-        accum += @floatFromInt(dt);
-    }
-
-    fn draw(x: i32, y: i32) void {
-        _ = x;
-        _ = y;
-
-        if (accum >= update_freq) {
-            accum -= update_freq;
-            last_avg_fps = avgFps();
+        const dir = c.Vector2Subtract(ent_self.pos, game.getWorldMousePos(state));
+        const look_angle_normalized = std.math.atan2(-dir.y, dir.x) / (std.math.pi * 2);
+        if (ent_self.angle != look_angle_normalized) {
+            events.appendAssumeCapacity(event.Event{ .input_look = .{ .direction = look_angle_normalized } });
         }
-
-        const text = std.fmt.bufPrintZ(global.mem.scratch_buffer, "{d:.0} FPS", .{last_avg_fps}) catch "???";
-        c.DrawText(text, 10, 10, 20, c.GREEN);
     }
+}
 
-    fn avgDelta() f64 {
-        var result: f64 = 0;
-        for (history) |dt| {
-            result += @floatFromInt(dt);
+fn sendEventsToServer(conn: *net.Connection, events: event.EventList) void {
+    for (events.items) |evt| {
+        const body = net.PacketBody{
+            .event = evt,
+        };
+        if (conn.sendPacket(&body)) |_| {} else |_| {
+            std.debug.print("failed to send packet, {s}\n", .{@tagName(body)});
         }
-        result /= history_size;
-        return result;
     }
+}
 
-    fn avgFps() f64 {
-        const ad = avgDelta();
-        return @as(f64, std.time.ns_per_s) / ad;
-    }
-};
+fn recvServerState(state: *game.State) void {
+    _ = state;
+}
+
+fn reconcileState(
+    server_state: *const game.State,
+    prev_state: *game.State,
+    next_state: *game.State,
+) void {
+    _ = server_state;
+    _ = prev_state;
+    _ = next_state;
+}
 
 const rng = struct {
     var random: std.rand.Random = undefined;

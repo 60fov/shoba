@@ -1,22 +1,8 @@
 const std = @import("std");
 const global = @import("global.zig");
 
-const event_max = 100;
-pub var queue: [event_max]Event = undefined;
-
-pub fn init() void {
-    std.debug.print("event size {}\n", @sizeOf(Event));
-    std.debug.print("event queue size {}\n", @sizeOf(@TypeOf(queue)));
-    queue = global.mem.fba_allocator.alloc(Event, event_max) catch unreachable;
-}
-
-pub fn deinit() void {
-    global.mem.fba_allocator.free(queue);
-}
-
-pub fn push(evt: Event) void {
-    _ = evt;
-}
+pub const event_max = 100;
+pub const EventList = std.ArrayList(Event);
 
 pub const EventTag = enum {
     input_move,

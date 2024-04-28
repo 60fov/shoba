@@ -5,6 +5,7 @@ const asset = @import("asset.zig");
 const input = @import("input.zig");
 const global = @import("global.zig");
 const event = @import("event.zig");
+const net = @import("net.zig");
 
 const Model = asset.Model;
 const ModelAnimation = asset.ModelAnimation;
@@ -57,26 +58,18 @@ pub const State = struct {
     }
 };
 
-pub fn update(state: *State, ns: i128) void {
+pub fn update(state: *State, ns: i128, input_events: *event.EventList) void {
     const dt: f32 = @as(f32, @floatFromInt(ns)) / 1e+9;
     state.time += dt;
 
-    { // update event queue from user input
-        if (input.key(c.KEY_E).isDown())
-            event.push(event.Event{ .input_move = .{ .direction = 0.75 } });
-        if (input.key(c.KEY_S).isDown())
-            event.push(event.Event{ .input_move = .{ .direction = 0.5 } });
-        if (input.key(c.KEY_LEFT_ALT).isDown())
-            event.push(event.Event{ .input_move = .{ .direction = 0.25 } });
-        if (input.key(c.KEY_F).isDown())
-            event.push(event.Event{ .input_move = .{ .direction = 0.0 } });
-    }
+    const ent_self = state.entities.get(state.main_entity_id);
 
     var move_dir: c.Vector2 = .{};
-    var look_dir: c.Vector2 = .{};
+    var look_angle = ent_self.angle;
 
     // TODO should this pop
-    for (event.queue) |evt| {
+    for (input_events.items) |evt| {
+        std.debug.print("event {}\n", .{evt});
         switch (evt) {
             .input_move => |move| {
                 const angle = std.math.pi * 2 * move.direction;
@@ -85,12 +78,8 @@ pub fn update(state: *State, ns: i128) void {
                     .y = std.math.sin(angle),
                 });
             },
-            .input_look => |move| {
-                const angle = std.math.pi * 2 * move.direction;
-                look_dir = c.Vector2{
-                    .x = std.math.cos(angle),
-                    .y = std.math.sin(angle),
-                };
+            .input_look => |look| {
+                look_angle = look.direction;
             },
             else => {},
         }
@@ -119,10 +108,7 @@ pub fn update(state: *State, ns: i128) void {
                 ent.anim_state.animateModel(&ent.model, &ent.animation);
             }
 
-            // const dir = c.Vector2Subtract(ent.pos, getWorldMousePos(state));
-            const dir = look_dir;
-            ent.angle = std.math.atan2(-dir.y, dir.x) / (std.math.pi * 2);
-
+            ent.angle = look_angle;
             slice.set(ent_id, ent);
         }
     }

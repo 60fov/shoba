@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 const c = @import("c.zig");
 const input = @import("input.zig");
 const global = @import("global.zig");
+const event = @import("event.zig");
 
 pub const proto_id: u32 = 0xbeef;
 
@@ -35,6 +36,26 @@ pub const Connection = struct {
         pckt_buff.write(u8, tag);
         switch (pckt_body.*) {
             .ping => {},
+            .event => |evt| {
+                const event_tag: u8 = @intFromEnum(evt);
+                pckt_buff.write(u8, event_tag);
+                // TODO compare to byte cast
+                switch (evt) {
+                    .input_move => |move| {
+                        pckt_buff.write(f32, move.direction);
+                    },
+                    .input_look => |look| {
+                        pckt_buff.write(f32, look.direction);
+                    },
+                    .input_ability => |ability| {
+                        pckt_buff.write(u8, @intFromEnum(ability.slot));
+                    },
+                }
+                // const bytes = std.mem.asBytes(evt);
+                // for (bytes) |byte| {
+                //     pckt_buff.write(u8, byte);
+                // }
+            },
         }
 
         // write crc32 of packet in-place of the protocol id
@@ -88,6 +109,23 @@ pub const Connection = struct {
                     .ping => {
                         body = .{ .ping = {} };
                     },
+                    .event => {
+                        const event_tag: event.EventTag = @enumFromInt(pckt_buff.read(u8));
+                        switch (event_tag) {
+                            .input_move => {
+                                const dir = pckt_buff.read(f32);
+                                body = .{ .event = .{ .input_move = .{ .direction = dir } } };
+                            },
+                            .input_look => {
+                                const dir = pckt_buff.read(f32);
+                                body = .{ .event = .{ .input_look = .{ .direction = dir } } };
+                            },
+                            .input_ability => {
+                                const slot: event.InputAbilityEvent.AbilitySlot = @enumFromInt(pckt_buff.read(u8));
+                                body = .{ .event = .{ .input_ability = .{ .slot = slot } } };
+                            },
+                        }
+                    },
                     // else => {
                     //     std.debug.print("unhandled packet body tag\n", .{tag});
                     // },
@@ -134,10 +172,12 @@ pub const PacketHeader = struct {
 
 pub const PacketBodyTag = enum(u8) {
     ping,
+    event,
 };
 
 pub const PacketBody = union(PacketBodyTag) {
     ping: void,
+    event: event.Event,
 };
 
 pub const Packet = struct {
@@ -191,7 +231,7 @@ pub const PacketBuffer = struct {
             f16, f32 => {
                 const size = @sizeOf(T);
                 const IntType = std.meta.Int(.unsigned, @bitSizeOf(T));
-                std.debug.assert(self.index + size < self.buffer.len);
+                std.debug.assert(self.index + size <= self.buffer.len);
 
                 const src = self.buffer[self.index..][0..size];
                 self.index += size;
