@@ -14,6 +14,8 @@ pub const Connection = struct {
 
     local_seq: u32 = 0,
     remote_seq: u32 = 0,
+    last_sent_time: i128 = 0,
+    last_recv_time: i128 = 0,
 
     pub fn sendPacket(self: *Connection, pckt_body: *const PacketBody) PacketSendError!void {
         var buff: [PacketBuffer.mem_size]u8 = undefined;
@@ -69,9 +71,11 @@ pub const Connection = struct {
             else => return PacketSendError.UnexpectError,
         };
         self.local_seq += 1;
+        self.last_sent_time = std.time.nanoTimestamp();
     }
 
     pub fn acceptPacket(self: *Connection, packet: *const Packet) void {
+        self.last_recv_time = std.time.nanoTimestamp();
         if (packet.header.seq > self.remote_seq) self.remote_seq = packet.header.seq;
     }
 

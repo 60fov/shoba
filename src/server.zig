@@ -62,7 +62,19 @@ pub fn main() void {
                 // send over network
 
                 // send packets
-                {}
+                {
+                    for (clients.items) |*conn| {
+                        if (now - conn.last_sent_time > 1 * std.time.ns_per_s) {
+                            std.debug.print("sending ping packet to client: {}...\n", .{conn.peer_address});
+                            const body = net.PacketBody{
+                                .ping = {},
+                            };
+                            conn.sendPacket(&body) catch {
+                                std.debug.print("failed\n", .{});
+                            };
+                        }
+                    }
+                }
 
                 // recv packets
                 {

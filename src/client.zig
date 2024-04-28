@@ -101,7 +101,7 @@ pub fn main() void {
                 pollInputEvents(state_next, &input_events);
 
                 sendEventsToServer(&server_conn, input_events);
-                recvServerState(state_server);
+                recvServerState(&server_conn, state_server);
                 reconcileState(state_server, state_prev, state_next);
 
                 state_prev.* = state_next.*;
@@ -175,7 +175,13 @@ fn sendEventsToServer(conn: *net.Connection, events: event.EventList) void {
     }
 }
 
-fn recvServerState(state: *game.State) void {
+fn recvServerState(conn: *net.Connection, state: *game.State) void {
+    var peer_addr: std.net.Address = undefined;
+    while (net.Connection.recvPacket(conn.socket, &peer_addr)) |pckt| {
+        if (peer_addr.eql(conn.peer_address)) {
+            conn.acceptPacket(&pckt);
+        }
+    } else |_| {}
     _ = state;
 }
 
