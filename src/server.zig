@@ -3,17 +3,44 @@ const std = @import("std");
 const global = @import("global.zig");
 const net = @import("net.zig");
 const game = @import("game.zig");
+const event = @import("event.zig");
 
-// TODO get tickrate from command line
+pub const Memory = struct {
+    pub const pckt_queue_max = 2048;
+    pub const input_queue_max = 512;
+    pub const scratch_size = 5 * 1024 * 1024;
+    pub const dynamic_size = 5 * 1024 * 1024;
 
-pub const port = 0xbeef;
+    isInitialized: bool,
+    scratch: [scratch_size]u8,
+    dynamic: [dynamic_size]u8,
+
+    pckt_queue: [pckt_queue_max]net.Packet,
+
+    input_queue: event.EventQueue,
+
+    state: game.State,
+};
 
 pub fn main() void {
-    global.init(std.heap.page_allocator) catch unreachable;
-    defer global.deinit(std.heap.page_allocator) catch unreachable;
+    const allocator = std.heap.c_allocator;
+    const memory: *Memory = allocator.create(Memory) catch unreachable;
+    defer allocator.destroy(memory);
+    // memory.* = std.mem.zeroInit(Memory, .{});
 
-    var address = global.local_address;
-    address.setPort(port);
+    var scratch_fba = std.heap.FixedBufferAllocator.init(&memory.scratch);
+    const scratch_allocator = scratch_fba.allocator();
+    _ = scratch_allocator;
+    var dynamic_fba = std.heap.FixedBufferAllocator.init(&memory.dynamic);
+    const dynamic_allocator = dynamic_fba.allocator();
+
+    std.debug.print("loading...\n", .{});
+
+    // memory.state = game.State.init();
+
+    net.init(dynamic_allocator);
+    var address = net.local_address;
+    address.setPort(net.server_port);
 
     var socket = net.Socket.socket(.{}) catch unreachable;
     socket.bind(address) catch unreachable;
@@ -28,10 +55,8 @@ pub fn main() void {
     var delta: i128 = 0;
 
     // var running = true;
-    const state = global.mem.fba_allocator.create(game.State) catch unreachable;
-    state.* = game.State{};
 
-    var clients = std.ArrayList(net.Connection).initCapacity(global.mem.fba_allocator, 3) catch unreachable;
+    var clients = std.ArrayList(net.Connection).initCapacity(dynamic_allocator, 3) catch unreachable;
 
     while (true) {
         // game time step
@@ -117,5 +142,7 @@ pub fn main() void {
                 }
             }
         }
+        // TODO is there a better way to reduce cpu usage? does this affect performance in anyway?
+        std.time.sleep(0);
     }
 }

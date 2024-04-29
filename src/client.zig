@@ -45,6 +45,7 @@ pub fn main() void {
 
     var scratch_fba = std.heap.FixedBufferAllocator.init(&memory.scratch);
     const scratch_allocator = scratch_fba.allocator();
+    _ = scratch_allocator;
     var dynamic_fba = std.heap.FixedBufferAllocator.init(&memory.dynamic);
     const dynamic_allocator = dynamic_fba.allocator();
 
@@ -57,7 +58,7 @@ pub fn main() void {
     c.SetTargetFPS(120);
 
     std.debug.print("init network...\n", .{});
-    net.init(scratch_allocator);
+    net.init(dynamic_allocator);
 
     var socket = net.Socket.socket(.{}) catch unreachable;
     socket.bind(null) catch unreachable;

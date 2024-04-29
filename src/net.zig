@@ -9,7 +9,7 @@ const event = @import("event.zig");
 pub const server_port = 0xbeef;
 pub const proto_id: u32 = 0xbeef;
 
-pub var address_list: std.net.AddressList = undefined;
+pub var address_list: *std.net.AddressList = undefined;
 pub var local_address: std.net.Address = undefined;
 pub var socket: Socket = undefined;
 
@@ -21,7 +21,7 @@ pub fn init(allocator: std.mem.Allocator) void {
 
     const buffer = allocator.alloc(u8, c.HOST_NAME_MAX) catch unreachable;
     const host_name = c.gethostname(buffer[0..c.HOST_NAME_MAX]) catch unreachable;
-    address_list = (std.net.getAddressList(allocator, host_name, 0) catch unreachable).*;
+    address_list = std.net.getAddressList(allocator, host_name, 0) catch unreachable;
     local_address = getaddr: {
         for (address_list.addrs) |addr| {
             // std.debug.print("addr{}: {}\n", .{ i, addr });
