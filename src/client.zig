@@ -131,17 +131,22 @@ fn pollInputEvents(memory: *Memory) void {
         if (input.key(c.KEY_E).isDown()) {
             memory.input_queue.push(event.Event{ .input_move = .{ .direction = 0.75 } });
         }
-        if (input.key(c.KEY_S).isDown())
+        if (input.key(c.KEY_S).isDown()) {
             memory.input_queue.push(event.Event{ .input_move = .{ .direction = 0.5 } });
-        if (input.key(c.KEY_LEFT_ALT).isDown())
+        }
+        if (input.key(c.KEY_LEFT_ALT).isDown()) {
             memory.input_queue.push(event.Event{ .input_move = .{ .direction = 0.25 } });
-        if (input.key(c.KEY_F).isDown())
+        }
+        if (input.key(c.KEY_F).isDown()) {
             memory.input_queue.push(event.Event{ .input_move = .{ .direction = 0.0 } });
+        }
 
         const dir = c.Vector2Subtract(player.pos, game.getWorldMousePos(state));
         const look_angle_normalized = std.math.atan2(-dir.y, dir.x) / (std.math.pi * 2);
         if (player.angle != look_angle_normalized) {
-            memory.input_queue.push(event.Event{ .input_look = .{ .direction = look_angle_normalized } });
+            memory.input_queue.push(
+                event.Event{ .input_look = .{ .direction = look_angle_normalized } },
+            );
         }
     }
 }
@@ -177,53 +182,10 @@ fn updateState(memory: *Memory, ns: i128) void {
     const dt: f32 = @as(f32, @floatFromInt(ns)) / 1e+9;
     state.time += dt;
 
-    const player = state.entities[0];
-
-    var move_dir: c.Vector2 = .{};
-    var look_angle = player.angle;
-
-    // TODO should this pop
-    for (input_queue.slice()) |evt| {
-        std.debug.print("event {}\n", .{evt});
-        switch (evt) {
-            .input_move => |move| {
-                const angle = std.math.pi * 2 * move.direction;
-                move_dir = c.Vector2Add(move_dir, c.Vector2{
-                    .x = std.math.cos(angle),
-                    .y = std.math.sin(angle),
-                });
-            },
-            .input_look => |look| {
-                look_angle = look.direction;
-            },
-            else => {},
-        }
-    }
-
-    { // move direction velocity
-        var ent = &state.entities[0];
-        move_dir = c.Vector2Normalize(move_dir);
-        const vel = c.Vector2Scale(move_dir, 10);
-        ent.vel = vel;
-    }
-
-    { // apply velocities to positions
-        for (&state.entities) |*ent| {
-            const pos = &ent.pos;
-            const vel = ent.vel;
-            const delta_pos = c.Vector2Scale(vel, dt);
-            pos.* = c.Vector2Add(pos.*, delta_pos);
-        }
-    }
-
-    { // animate models and set look direction
-        for (&state.entities) |*ent| {
-            if (ent.tag.animated) {
-                ent.anim_state.animateModel(&ent.model, &ent.animation);
-            }
-            ent.angle = look_angle;
-        }
-    }
+    const player = &state.entities[0];
+    game.applyInputsToEntity(player, input_queue.slice());
+    game.updateEntityPositions(state, dt);
+    game.animateModels(state);
 }
 
 fn drawState(memory: *Memory, alpha: f32) void {

@@ -64,7 +64,49 @@ pub const State = struct {
     }
 };
 
-// pub fn update(state: *State, ns: i128, input_events: *event.EventList) void
+pub fn applyInputsToEntity(ent: *Entity, input_queue: []event.Event) void {
+    var move_dir: c.Vector2 = .{};
+    var look_angle = ent.angle;
+
+    for (input_queue) |evt| {
+        std.debug.print("event {}\n", .{evt});
+        switch (evt) {
+            .input_move => |move| {
+                const angle = std.math.pi * 2 * move.direction;
+                move_dir = c.Vector2Add(move_dir, c.Vector2{
+                    .x = std.math.cos(angle),
+                    .y = std.math.sin(angle),
+                });
+            },
+            .input_look => |look| {
+                look_angle = look.direction;
+            },
+            else => {},
+        }
+    }
+
+    move_dir = c.Vector2Normalize(move_dir);
+    const vel = c.Vector2Scale(move_dir, 10);
+    ent.vel = vel;
+    ent.angle = look_angle;
+}
+
+pub fn updateEntityPositions(state: *State, dt: f32) void {
+    for (&state.entities) |*ent| {
+        const pos = &ent.pos;
+        const vel = ent.vel;
+        const delta_pos = c.Vector2Scale(vel, dt);
+        pos.* = c.Vector2Add(pos.*, delta_pos);
+    }
+}
+
+pub fn animateModels(state: *State) void {
+    for (&state.entities) |*ent| {
+        if (ent.tag.animated) {
+            ent.anim_state.animateModel(&ent.model, &ent.animation);
+        }
+    }
+}
 
 pub fn draw(state: *const State) void {
     const rl_cam = getRaylibCamera(state);
