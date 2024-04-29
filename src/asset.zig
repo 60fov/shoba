@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const c = @import("c.zig");
 const global = @import("global.zig");
@@ -10,19 +11,41 @@ var asset_id: AssetId = 0;
 var asset_id_table: AssetIdHashMap = undefined;
 var asset_name_table: AssetNameHashMap = undefined;
 
+pub const asset_file_list = [_]AssetLoadInfo{
+    .{ .name = "daniel", .kind = .model, .path = "assets/daniel.glb" },
+    .{ .name = "idle_anim", .kind = .model_animation, .path = "assets/daniel.glb" },
+    .{ .name = "dev_ground", .kind = .model, .path = "assets/dev_ground.glb" },
+};
+
+pub fn openAssetDir(allocator: std.mem.Allocator) !std.fs.Dir {
+    if (builtin.mode == .Debug) {
+        return try std.fs.cwd().openDir("assets", .{});
+    } else {
+        const exe_path = try std.fs.selfExeDirPathAlloc(allocator);
+        defer allocator.free(exe_path);
+
+        const asset_dir_path = try std.fs.path.join(allocator, &.{ exe_path, "assets" });
+        defer allocator.free(asset_dir_path);
+
+        return try std.fs.openDirAbsolute(asset_dir_path, .{});
+    }
+}
+
 /// doesn't free over-written assets
-pub fn load(kind: AssetKind, name: []const u8, options: AssetLoadOptions) !void {
-    const asset = switch (kind) {
-        .model => Asset{
-            .model = options.model,
-        },
-        .model_animation => Asset{
-            .model_animation = options.model_animation,
-        },
-    };
-    try asset_name_table.put(name, asset_id);
-    try asset_id_table.put(asset_id, asset);
-    asset_id += 1;
+pub fn loadAssets() !void {
+    for (asset_file_list) |asset_info| {
+        const asset = switch (asset_info.kind) {
+            .model => Asset{
+                .model = Model.init(asset_info.path),
+            },
+            .model_animation => Asset{
+                .model_animation = ModelAnimation.init(asset_info.path),
+            },
+        };
+        try asset_name_table.put(asset_info.name, asset_id);
+        try asset_id_table.put(asset_id, asset);
+        asset_id += 1;
+    }
 }
 
 /// TODO?
@@ -40,9 +63,9 @@ pub fn getByName(name: []const u8) Asset {
     return getById(getId(name));
 }
 
-pub fn init() void {
-    asset_name_table = AssetNameHashMap.init(global.mem.fba_allocator);
-    asset_id_table = AssetIdHashMap.init(global.mem.fba_allocator);
+pub fn init(allocator: std.mem.Allocator) void {
+    asset_name_table = AssetNameHashMap.init(allocator);
+    asset_id_table = AssetIdHashMap.init(allocator);
 }
 
 pub fn deinit() void {
@@ -58,9 +81,10 @@ pub const AssetKind = enum {
     model_animation,
 };
 
-pub const AssetLoadOptions = union(AssetKind) {
-    model: Model,
-    model_animation: ModelAnimation,
+pub const AssetLoadInfo = struct {
+    kind: AssetKind,
+    name: []const u8,
+    path: []const u8,
 };
 
 pub const Asset = union(AssetKind) {
@@ -120,3 +144,33 @@ pub const ModelAnimationState = struct {
         c.UpdateModelAnimation(model.rl_model, animation, self.ani_frame);
     }
 };
+
+// const AssetManager = struct {
+//     const Self = @This();
+
+//     asset_id: AssetId = 0,
+//     id_table: AssetIdHashMap = undefined,
+//     name_table: AssetNameHashMap = undefined,
+
+//     pub fn getId(self: *const Self, name: []const u8) AssetId {
+//         return self.name_table.get(name).?;
+//     }
+
+//     pub fn getById(self: *const Self, id: AssetId) Asset {
+//         return self.id_table.get(id).?;
+//     }
+
+//     pub fn getByName(self: *const Self, name: []const u8) Asset {
+//         return self.getById(getId(name));
+//     }
+
+//     pub fn init(allocator: std.mem.Allocator) void {
+//         asset_name_table = AssetNameHashMap.init(allocator);
+//         asset_id_table = AssetIdHashMap.init(allocator);
+//     }
+
+//     pub fn deinit() void {
+//         asset_name_table.deinit();
+//         asset_id_table.deinit();
+//     }
+// };

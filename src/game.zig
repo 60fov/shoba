@@ -12,33 +12,37 @@ const ModelAnimation = asset.ModelAnimation;
 const AssetId = asset.AssetId;
 const ModelAnimationState = asset.ModelAnimationState;
 
+pub const World = struct {
+    ground: Model = undefined,
+};
+
 pub const State = struct {
-    ground: AssetId = undefined,
+    time: f32 = 0,
+
+    world: World = .{},
     camera: Camera = undefined,
 
-    time: f32 = 0,
-    entities: EntitySoA = undefined,
+    entities: [Entity.max]Entity = [_]Entity{.{}} ** Entity.max,
     main_entity_id: EntityId = 0,
 
     pub fn init() State {
-        var entities = EntitySoA{};
-        entities.setCapacity(global.mem.fba_allocator, Entity.max) catch unreachable;
-        entities.appendAssumeCapacity(Entity{ .tag = .{ .render_flag = .ball } }); // 0
-        entities.appendAssumeCapacity(Entity{
-            .tag = .{
-                .render_flag = .model,
-                .animated = true,
+        var state = State{
+            .camera = Camera{
+                .target = 0,
             },
-            .model = asset.getByName("daniel").model,
-            .animation = asset.getByName("daniel_animation").model_animation,
-        }); // 1
-
-        return State{
-            .ground = asset.getId("dev_ground"),
-            .camera = Camera{ .target = 1 },
-            .entities = entities,
-            .main_entity_id = 1,
+            .world = .{
+                .ground = asset.getByName("dev_ground").model,
+            },
         };
+        const player = &state.entities[0];
+        player.tag = .{
+            .render_flag = .model,
+            .animated = true,
+        };
+        player.model = asset.getByName("daniel").model;
+        player.animation = asset.getByName("idle_anim").model_animation;
+        player.anim_state = .{};
+        return state;
     }
 
     pub fn lerp(a: *const State, b: *const State, alpha: f32) State {
@@ -48,88 +52,35 @@ pub const State = struct {
         state.camera.angle = std.math.lerp(a.camera.angle, b.camera.angle, alpha);
         state.camera.distance = std.math.lerp(a.camera.distance, b.camera.distance, alpha);
 
-        const pos = state.entities.items(.pos);
-        for (a.entities.items(.pos), b.entities.items(.pos), 0..) |a_pos, b_pos, i| {
-            pos[i].x = std.math.lerp(a_pos.x, b_pos.x, alpha);
-            pos[i].y = std.math.lerp(a_pos.y, b_pos.y, alpha);
+        for (0..Entity.max) |i| {
+            const ent = &state.entities[i];
+            const ent_a = a.entities[i];
+            const ent_b = b.entities[i];
+            ent.pos.x = std.math.lerp(ent_a.pos.x, ent_b.pos.x, alpha);
+            ent.pos.y = std.math.lerp(ent_b.pos.y, ent_b.pos.y, alpha);
         }
 
         return state;
     }
 };
 
-pub fn update(state: *State, ns: i128, input_events: *event.EventList) void {
-    const dt: f32 = @as(f32, @floatFromInt(ns)) / 1e+9;
-    state.time += dt;
+// pub fn update(state: *State, ns: i128, input_events: *event.EventList) void
 
-    const ent_self = state.entities.get(state.main_entity_id);
-
-    var move_dir: c.Vector2 = .{};
-    var look_angle = ent_self.angle;
-
-    // TODO should this pop
-    for (input_events.items) |evt| {
-        std.debug.print("event {}\n", .{evt});
-        switch (evt) {
-            .input_move => |move| {
-                const angle = std.math.pi * 2 * move.direction;
-                move_dir = c.Vector2Add(move_dir, c.Vector2{
-                    .x = std.math.cos(angle),
-                    .y = std.math.sin(angle),
-                });
-            },
-            .input_look => |look| {
-                look_angle = look.direction;
-            },
-            else => {},
-        }
-    }
-
-    { // move direction velocity
-        var ent = state.entities.get(state.main_entity_id);
-        move_dir = c.Vector2Normalize(move_dir);
-        const vel = c.Vector2Scale(move_dir, 10);
-        ent.vel = vel;
-        state.entities.set(state.main_entity_id, ent);
-    }
-
-    { // apply velocities to positions
-        for (state.entities.items(.pos), state.entities.items(.vel)) |*pos, vel| {
-            const delta_pos = c.Vector2Scale(vel, dt);
-            pos.* = c.Vector2Add(pos.*, delta_pos);
-        }
-    }
-
-    { // animate models and set look direction
-        var slice = state.entities.slice();
-        for (0..slice.len) |ent_id| {
-            var ent = slice.get(ent_id);
-            if (ent.tag.animated) {
-                ent.anim_state.animateModel(&ent.model, &ent.animation);
-            }
-
-            ent.angle = look_angle;
-            slice.set(ent_id, ent);
-        }
-    }
-}
-
-pub fn draw(prev_state: *const State, next_state: *const State, alpha: f32) void {
-    const state = State.lerp(prev_state, next_state, alpha);
-
-    const rl_cam = getRaylibCamera(&state);
+pub fn draw(state: *const State) void {
+    const rl_cam = getRaylibCamera(state);
     c.BeginMode3D(rl_cam);
     {
-        const ground = asset.getById(state.ground).model;
-        c.DrawModel(ground.rl_model, c.Vector3Zero(), 1, c.WHITE);
-        const entity_slice = state.entities.slice();
-        for (0..entity_slice.len) |ent_id| {
-            const entity = entity_slice.get(ent_id);
-            const pos3 = c.Vector3{ .x = entity.pos.x, .y = 0.01, .z = entity.pos.y };
-            switch (entity.tag.render_flag) {
+        // draw world
+        // const ground = asset.getById(state.ground).model;
+        c.DrawModel(state.world.ground.rl_model, c.Vector3Zero(), 1, c.WHITE);
+
+        // draw entities
+        for (state.entities) |ent| {
+            const pos3 = c.Vector3{ .x = ent.pos.x, .y = 0.01, .z = ent.pos.y };
+            switch (ent.tag.render_flag) {
                 .model => {
-                    const model = entity.model;
-                    const angle = entity.angle;
+                    const model = ent.model;
+                    const angle = ent.angle;
                     const rot_axis = c.Vector3{ .y = 1 };
                     const scale = c.Vector3Scale(c.Vector3One(), 0.04);
                     c.DrawCircle3D(pos3, 1, c.Vector3{ .x = 1 }, 90, c.BLUE);
@@ -142,7 +93,7 @@ pub fn draw(prev_state: *const State, next_state: *const State, alpha: f32) void
             }
         }
 
-        const wmp = getWorldMousePos(&state);
+        const wmp = getWorldMousePos(state);
         const cursor_pos = c.Vector3{ .x = wmp.x, .y = 0.01, .z = wmp.y };
         c.DrawCircle3D(cursor_pos, 1, c.Vector3{ .x = 1 }, 90, c.GOLD);
     }
@@ -161,7 +112,7 @@ pub const Camera = struct {
 };
 
 pub fn getRaylibCamera(state: *const State) c.Camera3D {
-    const target_entity = state.entities.get(state.camera.target);
+    const target_entity = &state.entities[state.camera.target];
 
     const theta = std.math.lerp(Camera.min_angle, Camera.max_angle, state.camera.angle);
     const hyp = std.math.lerp(Camera.min_dist, Camera.max_dist, state.camera.distance);

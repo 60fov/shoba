@@ -1,8 +1,12 @@
 const std = @import("std");
 const global = @import("global.zig");
+const queue = @import("queue.zig");
 
-pub const event_max = 100;
+const Queue = queue.Queue;
+
+pub const event_max = 64;
 pub const EventList = std.ArrayList(Event);
+pub const EventQueue = Queue(Event, event_max);
 
 pub const EventTag = enum {
     input_move,

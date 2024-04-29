@@ -6,7 +6,32 @@ const input = @import("input.zig");
 const global = @import("global.zig");
 const event = @import("event.zig");
 
+pub const server_port = 0xbeef;
 pub const proto_id: u32 = 0xbeef;
+
+pub var address_list: std.net.AddressList = undefined;
+pub var local_address: std.net.Address = undefined;
+pub var socket: Socket = undefined;
+
+pub fn init(allocator: std.mem.Allocator) void {
+    { // for WSAStartup
+        const addr_list = std.net.getAddressList(allocator, "localhost", 0) catch unreachable;
+        addr_list.deinit();
+    }
+
+    const buffer = allocator.alloc(u8, c.HOST_NAME_MAX) catch unreachable;
+    const host_name = c.gethostname(buffer[0..c.HOST_NAME_MAX]) catch unreachable;
+    address_list = (std.net.getAddressList(allocator, host_name, 0) catch unreachable).*;
+    local_address = getaddr: {
+        for (address_list.addrs) |addr| {
+            // std.debug.print("addr{}: {}\n", .{ i, addr });
+            if (addr.any.family == std.posix.AF.INET) {
+                break :getaddr addr;
+            }
+        }
+        unreachable;
+    };
+}
 
 pub const Connection = struct {
     socket: Socket,
@@ -79,9 +104,9 @@ pub const Connection = struct {
         if (packet.header.seq > self.remote_seq) self.remote_seq = packet.header.seq;
     }
 
-    pub fn recvPacket(socket: Socket, peer_address: *std.net.Address) PacketRecvError!Packet {
+    pub fn recvPacket(sock: Socket, peer_address: *std.net.Address) PacketRecvError!Packet {
         var buff: [PacketBuffer.mem_size]u8 = undefined;
-        while (socket.recvfrom(&buff, peer_address)) |pckt_size| {
+        while (sock.recvfrom(&buff, peer_address)) |pckt_size| {
             if (pckt_size == 0) unreachable;
 
             var pckt_buff = PacketBuffer{
@@ -313,7 +338,7 @@ pub const Socket = struct {
 
     /// must be called after `socket`
     pub fn bind(self: *Socket, address: ?std.net.Address) (std.posix.BindError || std.posix.GetSockNameError)!void {
-        const addr = address orelse global.local_address;
+        const addr = address orelse local_address;
         var sock_len = addr.getOsSockLen();
         try std.posix.bind(self.fd, &addr.any, sock_len);
 
@@ -338,53 +363,4 @@ pub const Socket = struct {
         sender.* = .{ .any = src_addr };
         return size;
     }
-
-    // // TODO actual data validation
-    // pub fn recvPacket(self: *Socket, packet: *Packet, address: *std.net.Address) !void {
-    //     var buff: [@sizeOf(Packet)]u8 = undefined;
-    //     const size = try self.recvfrom(&buff, address);
-
-    //     if (size < buff.len) return error.PacketRecievedIncomplete;
-
-    //     // var packet: Packet = undefined;
-    //     try packet.read(&buff);
-
-    //     // return packet;
-    // }
-
-    // pub fn sendPacket(self: *Socket, packet: *const Packet, address: std.net.Address) !void {
-    //     var buff: [@sizeOf(Packet.PacketData)]u8 = undefined;
-    //     try packet.write(&buff);
-    //     const size = try self.sendto(address, &buff);
-    //     if (size < buff.len) return error.PacketSentIncomplete;
-    // }
 };
-
-test "socket" {
-    var sock = Socket{};
-    defer sock.close();
-
-    // std.debug.print("empty socket: {}\n", .{socket});
-
-    try sock.socket(.{});
-
-    try std.testing.expect(sock.fd != null);
-    try std.testing.expect(sock.address == null);
-    // std.debug.print("socket now has fd: {any}\n", .{socket.fd});
-
-    try std.testing.expectError(Socket.SocketError.BindNullAddress, sock.bind());
-
-    const data: []const u8 = &[_]u8{ 10, 20, 30 };
-    const dest = try std.net.Address.parseIp4("127.0.0.1", 3000);
-    const size = try sock.sendto(dest, data);
-    try std.testing.expect(size == data.len);
-    // std.debug.print("sent data size: {}\n", .{size});
-
-    try std.testing.expect(sock.address == null);
-    const sock_address = try sock.getName();
-    // std.debug.print("socket has address but isnt stored: {}\nstored: {}\n", .{ socket, sock_address });
-
-    try sock.name();
-    try std.testing.expect(sock_address.eql(sock.address.?));
-    // std.debug.print("socket has stored address: {}\n", .{socket});
-}

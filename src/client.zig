@@ -5,56 +5,83 @@ const global = @import("global.zig");
 const input = @import("input.zig");
 const game = @import("game.zig");
 const asset = @import("asset.zig");
-const graphics = @import("graphics.zig");
 const net = @import("net.zig");
 const server = @import("server.zig");
 const event = @import("event.zig");
+const queue = @import("queue.zig");
 
+const Queue = queue.Queue;
 const Asset = asset.Asset;
+
+pub const Memory = struct {
+    pub const asset_count = asset.asset_file_list.len;
+    pub const pckt_queue_max = 256;
+    pub const input_queue_max = 64;
+    pub const scratch_size = 5 * 1024 * 1024;
+    pub const dynamic_size = 15 * 1024 * 1024;
+
+    isInitialized: bool,
+    scratch: [scratch_size]u8,
+    dynamic: [dynamic_size]u8,
+
+    pckt_queue: [pckt_queue_max]net.Packet,
+    server_connection: net.Connection,
+
+    input_queue: event.EventQueue,
+
+    framebuffer: c.RenderTexture,
+
+    state: struct {
+        prev: game.State,
+        next: game.State,
+    },
+};
 
 pub fn main() void {
     const allocator = std.heap.c_allocator;
-    global.init(allocator) catch unreachable;
-    defer global.deinit(allocator);
+    const memory: *Memory = allocator.create(Memory) catch unreachable;
+    defer allocator.destroy(memory);
+    // memory.* = std.mem.zeroInit(Memory, .{});
 
+    var scratch_fba = std.heap.FixedBufferAllocator.init(&memory.scratch);
+    const scratch_allocator = scratch_fba.allocator();
+    var dynamic_fba = std.heap.FixedBufferAllocator.init(&memory.dynamic);
+    const dynamic_allocator = dynamic_fba.allocator();
+
+    std.debug.print("init platform...\n", .{});
+    // raylib init
     c.InitWindow(global.window_width, global.window_height, "shoba");
     defer c.CloseWindow();
 
     c.SetExitKey(c.KEY_NULL);
-
     c.SetTargetFPS(120);
 
-    graphics.init();
-    asset.init();
-    defer asset.deinit();
+    std.debug.print("init network...\n", .{});
+    net.init(scratch_allocator);
 
-    rng.init();
+    var socket = net.Socket.socket(.{}) catch unreachable;
+    socket.bind(null) catch unreachable;
+    defer socket.close();
 
-    // load assets
-    {
-        std.debug.print("loading assets... ", .{});
-        const start = std.time.nanoTimestamp();
+    std.debug.print("loading...\n", .{});
+    { // memory init
 
-        asset.load(.model, "default", .{ .model = asset.Model{ .rl_model = c.LoadModelFromMesh(c.GenMeshPoly(6, 0.1)) } }) catch unreachable;
-        asset.load(.model, "dev_ground", .{ .model = asset.Model.init("assets/dev_ground.glb") }) catch unreachable;
-        asset.load(.model, "daniel", .{ .model = asset.Model.init("assets/daniel.glb") }) catch unreachable;
-        asset.load(.model_animation, "daniel_animation", .{ .model_animation = asset.ModelAnimation.init("assets/daniel.glb") }) catch unreachable;
+        asset.init(dynamic_allocator);
+        asset.loadAssets() catch unreachable;
 
-        const end = std.time.nanoTimestamp();
-        std.debug.print("done! {d:.2}s\n", .{@as(f32, @floatFromInt((end - start))) / std.time.ns_per_s});
+        memory.framebuffer = c.LoadRenderTexture(global.window_width, global.window_height);
+
+        var server_address = net.local_address;
+        server_address.setPort(net.server_port);
+        memory.server_connection = net.Connection{
+            .peer_address = server_address,
+            .socket = socket,
+        };
+
+        memory.state.prev = game.State.init();
+        memory.state.next = game.State.init();
     }
-
-    std.debug.print("initializing game state... \n", .{});
-
-    const game_state = global.mem.fba_allocator.alloc(game.State, 3) catch unreachable;
-    const state_prev = &game_state[0];
-    const state_next = &game_state[1];
-    const state_server = &game_state[2];
-    var input_events = std.ArrayList(event.Event).initCapacity(global.mem.fba_allocator, event.event_max) catch unreachable;
-    defer global.mem.fba_allocator.free(game_state);
-
-    state_prev.* = game.State.init();
-    state_next.* = game.State.init();
+    defer c.UnloadRenderTexture(memory.framebuffer);
 
     const ns = std.time.ns_per_s / global.tick_rate;
     if (ns == 0) unreachable;
@@ -65,27 +92,11 @@ pub fn main() void {
     var delta: i128 = 0;
     var alpha: f32 = 0;
 
-    var socket = net.Socket.socket(.{}) catch unreachable;
-    defer socket.close();
-
-    socket.bind(null) catch unreachable;
-    std.debug.print("socket: {}\n", .{socket.address});
-
-    var addr = global.local_address;
-    addr.setPort(server.port);
-
-    var server_conn = net.Connection{
-        .peer_address = addr,
-        .socket = socket,
-    };
-
     while (!c.WindowShouldClose()) {
         {
             const now = std.time.nanoTimestamp();
             delta = now - last;
             last = now;
-
-            // FPS.pushDelta(delta);
 
             accumulator += delta;
             if (accumulator > max_accum) {
@@ -98,126 +109,147 @@ pub fn main() void {
             }
 
             while (accumulator >= ns) {
-                pollInputEvents(state_next, &input_events);
-
-                sendEventsToServer(&server_conn, input_events);
-                recvServerState(&server_conn, state_server);
-                reconcileState(state_server, state_prev, state_next);
-
-                state_prev.* = state_next.*;
-                game.update(state_next, ns, &input_events);
+                pollInputEvents(memory);
+                updateNetwork(memory);
+                updateState(memory, ns);
                 accumulator -= ns;
             }
         }
 
         // TODO frame limiter
-        {
-            c.BeginTextureMode(graphics.framebuffer_main);
-            {
-                c.ClearBackground(c.BLUE);
-                alpha = @as(f32, @floatFromInt(accumulator)) / ns;
-                game.draw(state_prev, state_next, alpha);
-                // ui.draw();
-            }
-            c.EndTextureMode();
-
-            // final draw
-            c.BeginDrawing();
-            {
-                c.ClearBackground(c.BLACK);
-
-                const src = c.Rectangle{
-                    .width = @floatFromInt(graphics.framebuffer_main.texture.width),
-                    .height = @floatFromInt(-graphics.framebuffer_main.texture.height),
-                };
-                const dst = c.Rectangle{ .width = global.window_width, .height = global.window_height };
-                c.DrawTexturePro(graphics.framebuffer_main.texture, src, dst, .{}, 0, c.WHITE);
-
-                c.DrawFPS(10, 10);
-            }
-            c.EndDrawing();
-        }
-
-        // c.SwapScreenBuffer();
+        alpha = @as(f32, @floatFromInt(accumulator)) / ns;
+        drawState(memory, alpha);
     }
 }
 
-fn pollInputEvents(state: *const game.State, events: *event.EventList) void {
+fn pollInputEvents(memory: *Memory) void {
     input.poll();
-    events.clearRetainingCapacity();
-    const ent_self = state.entities.get(state.main_entity_id);
+    memory.input_queue.clear();
+    const state = &memory.state.next;
+    const player = state.entities[0];
     { // update event queue from user input
-        if (input.key(c.KEY_E).isDown())
-            events.appendAssumeCapacity(event.Event{ .input_move = .{ .direction = 0.75 } });
+        if (input.key(c.KEY_E).isDown()) {
+            memory.input_queue.push(event.Event{ .input_move = .{ .direction = 0.75 } });
+        }
         if (input.key(c.KEY_S).isDown())
-            events.appendAssumeCapacity(event.Event{ .input_move = .{ .direction = 0.5 } });
+            memory.input_queue.push(event.Event{ .input_move = .{ .direction = 0.5 } });
         if (input.key(c.KEY_LEFT_ALT).isDown())
-            events.appendAssumeCapacity(event.Event{ .input_move = .{ .direction = 0.25 } });
+            memory.input_queue.push(event.Event{ .input_move = .{ .direction = 0.25 } });
         if (input.key(c.KEY_F).isDown())
-            events.appendAssumeCapacity(event.Event{ .input_move = .{ .direction = 0.0 } });
+            memory.input_queue.push(event.Event{ .input_move = .{ .direction = 0.0 } });
 
-        const dir = c.Vector2Subtract(ent_self.pos, game.getWorldMousePos(state));
+        const dir = c.Vector2Subtract(player.pos, game.getWorldMousePos(state));
         const look_angle_normalized = std.math.atan2(-dir.y, dir.x) / (std.math.pi * 2);
-        if (ent_self.angle != look_angle_normalized) {
-            events.appendAssumeCapacity(event.Event{ .input_look = .{ .direction = look_angle_normalized } });
+        if (player.angle != look_angle_normalized) {
+            memory.input_queue.push(event.Event{ .input_look = .{ .direction = look_angle_normalized } });
         }
     }
 }
 
-fn sendEventsToServer(conn: *net.Connection, events: event.EventList) void {
-    for (events.items) |evt| {
+fn updateNetwork(memory: *Memory) void {
+    // send events to server
+    for (memory.input_queue.slice()) |evt| {
         const body = net.PacketBody{
             .event = evt,
         };
-        if (conn.sendPacket(&body)) |_| {} else |_| {
+        if (memory.server_connection.sendPacket(&body)) |_| {} else |_| {
             std.debug.print("failed to send packet, {s}\n", .{@tagName(body)});
         }
     }
-}
 
-fn recvServerState(conn: *net.Connection, state: *game.State) void {
+    // recv server state
     var peer_addr: std.net.Address = undefined;
+    const conn = &memory.server_connection;
     while (net.Connection.recvPacket(conn.socket, &peer_addr)) |pckt| {
         if (peer_addr.eql(conn.peer_address)) {
             conn.acceptPacket(&pckt);
         }
     } else |_| {}
-    _ = state;
 }
 
-fn reconcileState(
-    server_state: *const game.State,
-    prev_state: *game.State,
-    next_state: *game.State,
-) void {
-    _ = server_state;
-    _ = prev_state;
-    _ = next_state;
-}
+fn updateState(memory: *Memory, ns: i128) void {
+    // TODO network reconciliation
+    memory.state.prev = memory.state.next;
 
-const rng = struct {
-    var random: std.rand.Random = undefined;
+    const state = &memory.state.next;
+    const input_queue = &memory.input_queue;
 
-    pub fn init() void {
-        var prng = std.rand.Xoroshiro128.init(0xbeef);
-        random = prng.random();
+    const dt: f32 = @as(f32, @floatFromInt(ns)) / 1e+9;
+    state.time += dt;
+
+    const player = state.entities[0];
+
+    var move_dir: c.Vector2 = .{};
+    var look_angle = player.angle;
+
+    // TODO should this pop
+    for (input_queue.slice()) |evt| {
+        std.debug.print("event {}\n", .{evt});
+        switch (evt) {
+            .input_move => |move| {
+                const angle = std.math.pi * 2 * move.direction;
+                move_dir = c.Vector2Add(move_dir, c.Vector2{
+                    .x = std.math.cos(angle),
+                    .y = std.math.sin(angle),
+                });
+            },
+            .input_look => |look| {
+                look_angle = look.direction;
+            },
+            else => {},
+        }
     }
 
-    pub fn position() c.Vector2 {
-        var bytes: [2]u8 = undefined;
-        std.os.getrandom(&bytes) catch unreachable;
-        const x: f32 = @mod(@as(f32, @floatFromInt(bytes[0])), 20) - 10;
-        const y: f32 = @mod(@as(f32, @floatFromInt(bytes[1])), 20) - 10;
-        return .{
-            .x = x,
-            .y = y,
+    { // move direction velocity
+        var ent = &state.entities[0];
+        move_dir = c.Vector2Normalize(move_dir);
+        const vel = c.Vector2Scale(move_dir, 10);
+        ent.vel = vel;
+    }
+
+    { // apply velocities to positions
+        for (&state.entities) |*ent| {
+            const pos = &ent.pos;
+            const vel = ent.vel;
+            const delta_pos = c.Vector2Scale(vel, dt);
+            pos.* = c.Vector2Add(pos.*, delta_pos);
+        }
+    }
+
+    { // animate models and set look direction
+        for (&state.entities) |*ent| {
+            if (ent.tag.animated) {
+                ent.anim_state.animateModel(&ent.model, &ent.animation);
+            }
+            ent.angle = look_angle;
+        }
+    }
+}
+
+fn drawState(memory: *Memory, alpha: f32) void {
+    const framebuffer = memory.framebuffer;
+
+    c.BeginTextureMode(framebuffer);
+    {
+        c.ClearBackground(c.BLUE);
+        const draw_state = game.State.lerp(&memory.state.prev, &memory.state.next, alpha);
+        game.draw(&draw_state);
+    }
+    c.EndTextureMode();
+
+    // final draw
+    c.BeginDrawing();
+    {
+        c.ClearBackground(c.BLACK);
+
+        const src = c.Rectangle{
+            .width = @floatFromInt(framebuffer.texture.width),
+            .height = @floatFromInt(-framebuffer.texture.height),
         };
-    }
-};
+        const dst = c.Rectangle{ .width = global.window_width, .height = global.window_height };
+        c.DrawTexturePro(framebuffer.texture, src, dst, .{}, 0, c.WHITE);
 
-// TODO
-// update zig
-// event system
-// menu
-// camera controls
-// game logic structure
+        c.DrawFPS(10, 10);
+    }
+    c.EndDrawing();
+}
