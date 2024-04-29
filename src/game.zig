@@ -6,11 +6,14 @@ const input = @import("input.zig");
 const global = @import("global.zig");
 const event = @import("event.zig");
 const net = @import("net.zig");
+const ds = @import("ds.zig");
 
 const Model = asset.Model;
 const ModelAnimation = asset.ModelAnimation;
 const AssetId = asset.AssetId;
 const ModelAnimationState = asset.ModelAnimationState;
+
+pub const max_player_count = 32;
 
 pub const World = struct {
     ground: Model = undefined,
@@ -62,7 +65,24 @@ pub const State = struct {
 
         return state;
     }
+
+    pub fn playerEntities(state: *State) []Entity {
+        // TODO not surewhere to put this, connected to max connections
+        return state.entities[0..max_player_count];
+    }
 };
+
+pub fn createPlayer() Entity {
+    return Entity{
+        .tag = .{
+            .render_flag = .model,
+            .animated = true,
+        },
+        .model = asset.getByName("daniel").model,
+        .animation = asset.getByName("idle_anim").model_animation,
+        .anim_state = .{},
+    };
+}
 
 pub fn applyInputsToEntity(ent: *Entity, input_queue: []event.Event) void {
     var move_dir: c.Vector2 = .{};
@@ -186,6 +206,8 @@ pub fn getWorldMousePos(state: *const State) c.Vector2 {
 pub const Entity = struct {
     const max = 1000;
 
+    exists: bool = false,
+    // TODO why???
     tag: EntityTag = .{},
 
     pos: c.Vector2 = .{},

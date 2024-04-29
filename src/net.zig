@@ -13,6 +13,11 @@ pub var address_list: *std.net.AddressList = undefined;
 pub var local_address: std.net.Address = undefined;
 pub var socket: Socket = undefined;
 
+pub const BindOptions = struct {
+    address: ?std.net.Address = null,
+    socket_options: Socket.SocketOptions = .{},
+};
+
 pub fn init(allocator: std.mem.Allocator) void {
     { // for WSAStartup
         const addr_list = std.net.getAddressList(allocator, "localhost", 0) catch unreachable;
@@ -33,9 +38,17 @@ pub fn init(allocator: std.mem.Allocator) void {
     };
 }
 
+pub fn bind(options: BindOptions) void {
+    socket = Socket.socket(options.socket_options) catch unreachable;
+    socket.bind(options.address) catch unreachable;
+}
+
+pub fn unbind() void {
+    socket.close();
+}
+
 pub const Connection = struct {
-    socket: Socket,
-    peer_address: std.net.Address,
+    peer_address: std.net.Address = undefined,
 
     local_seq: u32 = 0,
     remote_seq: u32 = 0,
@@ -66,7 +79,6 @@ pub const Connection = struct {
             .event => |evt| {
                 const event_tag: u8 = @intFromEnum(evt);
                 pckt_buff.write(u8, event_tag);
-                // TODO compare to byte cast
                 switch (evt) {
                     .input_move => |move| {
                         pckt_buff.write(f32, move.direction);
@@ -77,11 +89,8 @@ pub const Connection = struct {
                     .input_ability => |ability| {
                         pckt_buff.write(u8, @intFromEnum(ability.slot));
                     },
+                    .empty => unreachable,
                 }
-                // const bytes = std.mem.asBytes(evt);
-                // for (bytes) |byte| {
-                //     pckt_buff.write(u8, byte);
-                // }
             },
         }
 
@@ -89,7 +98,7 @@ pub const Connection = struct {
         const crc = std.hash.Crc32.hash(pckt_buff.buffer);
         @memcpy(pckt_buff.buffer[0..4], std.mem.asBytes(&crc));
 
-        _ = self.socket.sendto(self.peer_address, pckt_buff.filledSlice()) catch |err| switch (err) {
+        _ = socket.sendto(self.peer_address, pckt_buff.filledSlice()) catch |err| switch (err) {
             std.posix.SendToError.UnreachableAddress => return PacketSendError.UnreachableAddress,
             std.posix.SendToError.SocketNotConnected => unreachable,
             std.posix.SendToError.AddressNotAvailable => unreachable,
@@ -99,9 +108,9 @@ pub const Connection = struct {
         self.last_sent_time = std.time.nanoTimestamp();
     }
 
-    pub fn acceptPacket(self: *Connection, packet: *const Packet) void {
+    pub fn update(self: *Connection, header: *const PacketHeader) void {
         self.last_recv_time = std.time.nanoTimestamp();
-        if (packet.header.seq > self.remote_seq) self.remote_seq = packet.header.seq;
+        if (header.seq > self.remote_seq) self.remote_seq = header.seq;
     }
 
     pub fn recvPacket(sock: Socket, peer_address: *std.net.Address) PacketRecvError!Packet {
@@ -153,6 +162,7 @@ pub const Connection = struct {
                                 const slot: event.InputAbilityEvent.AbilitySlot = @enumFromInt(pckt_buff.read(u8));
                                 body = .{ .event = .{ .input_ability = .{ .slot = slot } } };
                             },
+                            .empty => unreachable,
                         }
                     },
                     // else => {

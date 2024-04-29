@@ -1,20 +1,19 @@
 const std = @import("std");
 const global = @import("global.zig");
-const queue = @import("queue.zig");
-
-const Queue = queue.Queue;
+const ds = @import("ds.zig");
 
 pub const event_max = 64;
-pub const EventList = std.ArrayList(Event);
-pub const EventQueue = Queue(Event, event_max);
+pub const EventList = ds.List(Event, event_max, .{ .empty = {} });
 
 pub const EventTag = enum {
+    empty,
     input_move,
     input_look,
     input_ability,
 };
 
 pub const Event = union(EventTag) {
+    empty: void,
     input_move: InputMoveEvent,
     input_look: InputLookEvent,
     input_ability: InputAbilityEvent,

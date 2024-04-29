@@ -8,9 +8,7 @@ const asset = @import("asset.zig");
 const net = @import("net.zig");
 const server = @import("server.zig");
 const event = @import("event.zig");
-const queue = @import("queue.zig");
 
-const Queue = queue.Queue;
 const Asset = asset.Asset;
 
 pub const Memory = struct {
@@ -27,7 +25,7 @@ pub const Memory = struct {
     pckt_queue: [pckt_queue_max]net.Packet,
     server_connection: net.Connection,
 
-    input_queue: event.EventQueue,
+    input_queue: event.EventList,
 
     framebuffer: c.RenderTexture,
 
@@ -59,10 +57,8 @@ pub fn main() void {
 
     std.debug.print("init network...\n", .{});
     net.init(dynamic_allocator);
-
-    var socket = net.Socket.socket(.{}) catch unreachable;
-    socket.bind(null) catch unreachable;
-    defer socket.close();
+    net.bind(.{});
+    defer net.unbind();
 
     std.debug.print("loading...\n", .{});
     { // memory init
@@ -76,7 +72,6 @@ pub fn main() void {
         server_address.setPort(net.server_port);
         memory.server_connection = net.Connection{
             .peer_address = server_address,
-            .socket = socket,
         };
 
         memory.state.prev = game.State.init();
@@ -166,9 +161,9 @@ fn updateNetwork(memory: *Memory) void {
     // recv server state
     var peer_addr: std.net.Address = undefined;
     const conn = &memory.server_connection;
-    while (net.Connection.recvPacket(conn.socket, &peer_addr)) |pckt| {
+    while (net.Connection.recvPacket(net.socket, &peer_addr)) |pckt| {
         if (peer_addr.eql(conn.peer_address)) {
-            conn.acceptPacket(&pckt);
+            conn.update(&pckt.header);
         }
     } else |_| {}
 }
