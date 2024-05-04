@@ -89,7 +89,7 @@ pub fn applyInputsToEntity(ent: *Entity, input_queue: []event.Event) void {
     var look_angle = ent.angle;
 
     for (input_queue) |evt| {
-        std.debug.print("event {}\n", .{evt});
+        // std.debug.print("event {}\n", .{evt});
         switch (evt) {
             .input_move => |move| {
                 const angle = std.math.pi * 2 * move.direction;

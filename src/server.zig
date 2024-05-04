@@ -96,7 +96,7 @@ pub fn recvNetwork(memory: *Memory) void {
     const clients = &memory.client_list;
 
     var peer: std.net.Address = undefined;
-    recv_pckt_loop: while (net.Connection.recvPacket(net.socket, &peer)) |pckt| {
+    recv_pckt_loop: while (net.recvPacketFrom(&peer)) |pckt| {
         std.debug.print("pckt, seq: {}, ack: {}\n", .{ pckt.header.seq, pckt.header.ack });
         var current_client: *Client = find_client: {
             for (clients.slice()) |*client| {
@@ -135,19 +135,28 @@ pub fn recvNetwork(memory: *Memory) void {
                 continue :recv_pckt_loop;
             }
         };
+
         current_client.connection.update(&pckt.header);
 
         // handle packet
         // TODO maybe conceptualize recving input event packets as polling network input
         // why? would introduce more (potentially helpful) overlap between client and server
-        switch (pckt.body) {
-            .ping => {
-                std.debug.print("{}: ping!\n", .{peer});
-            },
-            .event => |evt| {
-                std.debug.print("{}: event {s}\n", .{ peer, @tagName(evt) });
-                current_client.input_queue.push(evt);
-            },
+        for (pckt.segments) |segment| {
+            switch (segment) {
+                .empty => {
+                    std.debug.print("{}: empty\n", .{peer});
+                },
+                .ping => {
+                    std.debug.print("{}: ping!\n", .{peer});
+                },
+                .event => |evt| {
+                    std.debug.print("{}: event {s}\n", .{ peer, @tagName(evt) });
+                    current_client.input_queue.push(evt);
+                },
+                else => {
+                    std.debug.print("{}: sent unhandled packet segment {s}\n", .{ peer, @tagName(segment) });
+                },
+            }
         }
     } else |err| switch (err) {
         net.PacketRecvError.EndOfPackets => {},
@@ -173,17 +182,34 @@ pub fn updateState(memory: *Memory, ns: i128) void {
 }
 
 pub fn sendNetwork(memory: *Memory) void {
-    const clients = &memory.client_list;
-    for (clients.slice()) |*client| {
-        const conn = client.connection;
-        if (std.time.nanoTimestamp() - conn.last_sent_time > 1 * std.time.ns_per_s) {
-            std.debug.print("sending ping packet to client: {}...\n", .{conn.peer_address});
-            const body = net.PacketBody{
-                .ping = {},
-            };
-            client.connection.sendPacket(&body) catch {
-                std.debug.print("failed\n", .{});
-            };
+    var pckt_seg_list: ds.List(
+        net.PacketSegment,
+        net.Packet.max_segment_count,
+        net.PacketSegment{ .empty = {} },
+    ) = .{};
+
+    // collect state changes
+    for (memory.state.entities, 0..) |ent, i| {
+        if (ent.exists) {
+            pckt_seg_list.push(net.PacketSegment{
+                .entity = .{
+                    .id = @intCast(i),
+                    .x = ent.pos.x,
+                    .y = ent.pos.y,
+                    .angle = ent.angle,
+                },
+            });
         }
+    }
+
+    // construct and send packet to all connected clients
+    var pckt: net.Packet = .{
+        .segments = pckt_seg_list.slice(),
+    };
+
+    for (memory.client_list.slice()) |*client| {
+        net.sendPacketTo(&pckt, &client.connection) catch |err| {
+            std.debug.print("failed to send packet, err {}\n", .{err});
+        };
     }
 }

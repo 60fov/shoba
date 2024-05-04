@@ -8,6 +8,7 @@ const asset = @import("asset.zig");
 const net = @import("net.zig");
 const server = @import("server.zig");
 const event = @import("event.zig");
+const ds = @import("ds.zig");
 
 const Asset = asset.Asset;
 
@@ -148,22 +149,46 @@ fn pollInputEvents(memory: *Memory) void {
 }
 
 fn updateNetwork(memory: *Memory) void {
-    // send events to server
-    for (memory.input_queue.slice()) |evt| {
-        const body = net.PacketBody{
-            .event = evt,
-        };
-        if (memory.server_connection.sendPacket(&body)) |_| {} else |_| {
-            std.debug.print("failed to send packet, {s}\n", .{@tagName(body)});
+    { // send input events to server
+        var pckt_seg_list: ds.List(
+            net.PacketSegment,
+            net.Packet.max_segment_count,
+            net.PacketSegment{ .empty = {} },
+        ) = .{};
+        for (memory.input_queue.slice()) |evt| {
+            pckt_seg_list.push(net.PacketSegment{
+                .event = evt,
+            });
         }
+
+        var pckt = net.Packet{
+            .segments = pckt_seg_list.slice(),
+        };
+
+        net.sendPacketTo(&pckt, &memory.server_connection) catch |err| {
+            std.debug.print("failed to send input events packet, err: {}\n", .{err});
+            unreachable;
+        };
     }
 
-    // recv server state
+    // recv state from server
     var peer_addr: std.net.Address = undefined;
-    const conn = &memory.server_connection;
-    while (net.Connection.recvPacket(net.socket, &peer_addr)) |pckt| {
-        if (peer_addr.eql(conn.peer_address)) {
-            conn.update(&pckt.header);
+    while (net.recvPacketFrom(&peer_addr)) |pckt| {
+        if (peer_addr.eql(memory.server_connection.peer_address)) {
+            memory.server_connection.update(&pckt.header);
+            for (pckt.segments) |segment| {
+                switch (segment) {
+                    .ping => {
+                        std.debug.print("ping!\n", .{});
+                    },
+                    .entity => |ent| {
+                        std.debug.print("entity segment, id: {}\n", .{ent.id});
+                    },
+                    else => {
+                        std.debug.print("recv'd unhandled packet segment, {s}\n", .{@tagName(segment)});
+                    },
+                }
+            }
         }
     } else |_| {}
 }
